@@ -812,6 +812,7 @@ export function buildSampleSetup() {
       "deal_market_check",
       "deal_product_groups",
       "deal_best_price_board",
+      "deal_llm_review_queue",
       "deal_watch_insights",
       "deal_watch_identity",
       "deal_schedule_advice",
@@ -835,6 +836,7 @@ export function buildSampleSetup() {
       "Use deal_market_check for my best-looking deal and show me whether the current watch is actually the best price in my store.",
       "Use deal_product_groups to cluster likely same-product watches and show me which groups have meaningful internal price spread.",
       "Use deal_best_price_board to rank where my current best-known internal prices are hiding.",
+      "Use deal_llm_review_queue to prepare any weak extraction or unresolved identity cases for optional manual or llm-task review.",
       "Use deal_watch_insights for my most volatile watch and explain whether it looks real or noisy.",
       "Use deal_watch_identity for my best current deal and tell me whether any other watches appear to be the same product.",
       "Use deal_workflow_triage to tell me what changed, what matters, what is noisy, and what I should review first.",
@@ -863,6 +865,7 @@ export function buildQuickstartGuide() {
       "Run deal_scan with commit true to capture the first snapshot.",
       "Use deal_alerts, deal_trends, deal_market_check, deal_watch_identity, deal_workflow_triage, and deal_report to inspect what changed.",
       "Use deal_product_groups and deal_best_price_board after you have same-product coverage across multiple retailers.",
+      "Use deal_llm_review_queue when you want optional model-assisted review without making Deal Hunter itself depend on llm-task.",
       "Use deal_watch_export before large watchlist edits or migration.",
       "Use deal_watch_import_url with dryRun first before applying a shared remote watchlist.",
     ],
@@ -873,6 +876,7 @@ export function buildQuickstartGuide() {
       "Use deal_view_report for my saved GPU alerts view so I get a compact multi-signal report in one call.",
       "Use deal_workflow_triage to tell me what changed and what deserves attention right now.",
       "Use deal_best_price_board to show me where the best current same-product prices are across my store.",
+      "Use deal_llm_review_queue if any watches still look ambiguous and I want a ready-to-run JSON review payload.",
       "Use deal_top_drops and deal_watch_insights to tell me whether my best-looking deal is actually unusual.",
     ],
     privacyAndSafety: [
@@ -2009,5 +2013,203 @@ export function buildViewReport(
     trends: buildTrendsSummary(scopedStore, limit),
     topDrops: buildTopDropsSummary(scopedStore, options?.metric ?? "vs_peak", limit),
     bestOpportunities: buildWorkflowBestOpportunities(scopedStore, Math.min(limit, 5)),
+  };
+}
+
+export function buildLlmReviewQueue(
+  store: StoreFile,
+  limit = 10,
+): {
+  integrationStatus: "deferred_cleanly";
+  reason: string;
+  candidateCount: number;
+  candidates: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    type: "extraction_review" | "identity_resolution";
+    priority: "high" | "medium";
+    reasons: string[];
+    currentSnapshot: {
+      title?: string;
+      canonicalTitle?: string;
+      brand?: string;
+      modelId?: string;
+      sku?: string;
+      mpn?: string;
+      gtin?: string;
+      asin?: string;
+      price?: number;
+      currency?: string;
+      rawSnippet?: string;
+    } | null;
+    prompt: string;
+    input: Record<string, unknown>;
+    suggestedSchema: Record<string, unknown>;
+  }>;
+  notes: string[];
+} {
+  const titleCounts = new Map<string, number>();
+  for (const watch of store.watches) {
+    const canonicalTitle = watch.lastSnapshot?.canonicalTitle?.trim().toLowerCase();
+    if (canonicalTitle) {
+      titleCounts.set(canonicalTitle, (titleCounts.get(canonicalTitle) ?? 0) + 1);
+    }
+  }
+
+  const extractionCandidates = store.watches
+    .map((watch) => {
+      const coverage = buildExtractionCoverage(watch);
+      if (coverage.level !== "none" && coverage.level !== "low") return null;
+      return {
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        type: "extraction_review" as const,
+        priority: coverage.level === "none" ? "high" as const : "medium" as const,
+        reasons: coverage.reasons,
+        currentSnapshot: watch.lastSnapshot
+          ? {
+              title: watch.lastSnapshot.title,
+              canonicalTitle: watch.lastSnapshot.canonicalTitle,
+              brand: watch.lastSnapshot.brand,
+              modelId: watch.lastSnapshot.modelId,
+              sku: watch.lastSnapshot.sku,
+              mpn: watch.lastSnapshot.mpn,
+              gtin: watch.lastSnapshot.gtin,
+              asin: watch.lastSnapshot.asin,
+              price: watch.lastSnapshot.price,
+              currency: watch.lastSnapshot.currency,
+              rawSnippet: watch.lastSnapshot.rawSnippet,
+            }
+          : null,
+        prompt:
+          "Review the product page extraction. Return the best-guess normalized product title, optional brand/model identifiers, price, currency, stock status if obvious, and a confidence explanation.",
+        input: {
+          url: watch.url,
+          label: watch.label,
+          latestSnapshot: watch.lastSnapshot ?? null,
+          recentHistory: getHistoryEntries(watch).slice(-3),
+        },
+        suggestedSchema: {
+          type: "object",
+          properties: {
+            title: { type: ["string", "null"] },
+            brand: { type: ["string", "null"] },
+            modelId: { type: ["string", "null"] },
+            sku: { type: ["string", "null"] },
+            mpn: { type: ["string", "null"] },
+            gtin: { type: ["string", "null"] },
+            asin: { type: ["string", "null"] },
+            price: { type: ["number", "null"] },
+            currency: { type: ["string", "null"] },
+            stockState: { type: ["string", "null"] },
+            confidence: {
+              type: "object",
+              properties: {
+                level: { type: "string", enum: ["low", "medium", "high"] },
+                reasons: { type: "array", items: { type: "string" } },
+              },
+              required: ["level", "reasons"],
+              additionalProperties: false,
+            },
+          },
+          required: ["title", "confidence"],
+          additionalProperties: false,
+        },
+      };
+    })
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+
+  const identityCandidates = store.watches
+    .map((watch) => {
+      const title = watch.lastSnapshot?.canonicalTitle?.trim().toLowerCase();
+      if (!watch.lastSnapshot || !title) return null;
+      if (getWatchIdentityFields(watch).length > 0) return null;
+      if ((titleCounts.get(title) ?? 0) < 2) return null;
+
+      const peerTitles = store.watches
+        .filter((candidate) => candidate.id !== watch.id && candidate.lastSnapshot?.canonicalTitle?.trim().toLowerCase() === title)
+        .map((candidate) => ({
+          watchId: candidate.id,
+          label: candidate.label,
+          url: candidate.url,
+          price: candidate.lastSnapshot?.price,
+          brand: candidate.lastSnapshot?.brand,
+        }))
+        .slice(0, 5);
+
+      return {
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        type: "identity_resolution" as const,
+        priority: "medium" as const,
+        reasons: [
+          "Canonical title appears on multiple watches, but this watch has no persistent identifiers.",
+          "Same-product grouping would be stronger with model/SKU/MPN/GTIN confirmation.",
+        ],
+        currentSnapshot: {
+          title: watch.lastSnapshot.title,
+          canonicalTitle: watch.lastSnapshot.canonicalTitle,
+          brand: watch.lastSnapshot.brand,
+          modelId: watch.lastSnapshot.modelId,
+          sku: watch.lastSnapshot.sku,
+          mpn: watch.lastSnapshot.mpn,
+          gtin: watch.lastSnapshot.gtin,
+          asin: watch.lastSnapshot.asin,
+          price: watch.lastSnapshot.price,
+          currency: watch.lastSnapshot.currency,
+          rawSnippet: watch.lastSnapshot.rawSnippet,
+        },
+        prompt:
+          "Resolve likely product identity for this watch. Infer any reliable persistent identifiers only if supported by the provided snapshot/title context. Be conservative.",
+        input: {
+          url: watch.url,
+          label: watch.label,
+          latestSnapshot: watch.lastSnapshot,
+          peerWatchesWithSameCanonicalTitle: peerTitles,
+        },
+        suggestedSchema: {
+          type: "object",
+          properties: {
+            sameProductAsPeers: { type: "boolean" },
+            brand: { type: ["string", "null"] },
+            modelId: { type: ["string", "null"] },
+            sku: { type: ["string", "null"] },
+            mpn: { type: ["string", "null"] },
+            gtin: { type: ["string", "null"] },
+            asin: { type: ["string", "null"] },
+            confidence: {
+              type: "object",
+              properties: {
+                level: { type: "string", enum: ["low", "medium", "high"] },
+                reasons: { type: "array", items: { type: "string" } },
+              },
+              required: ["level", "reasons"],
+              additionalProperties: false,
+            },
+          },
+          required: ["sameProductAsPeers", "confidence"],
+          additionalProperties: false,
+        },
+      };
+    })
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+
+  const candidates = [...extractionCandidates, ...identityCandidates]
+    .sort((a, b) => Number(b.priority === "high") - Number(a.priority === "high") || a.url.localeCompare(b.url))
+    .slice(0, limit);
+
+  return {
+    integrationStatus: "deferred_cleanly",
+    reason:
+      "Automatic LLM fallback is intentionally not wired because the clean built-in path depends on bundled OpenClaw llm-task internals rather than a stable community-plugin API.",
+    candidateCount: candidates.length,
+    candidates,
+    notes: [
+      "This queue is safe for manual review or for a separate workflow that explicitly enables the bundled llm-task plugin.",
+      "The suggested prompt/input/schema fields are designed to be copied into a JSON-only LLM task without giving this plugin a hard runtime dependency on llm-task.",
+    ],
   };
 }

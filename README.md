@@ -119,6 +119,7 @@ agents: {
           "deal_market_check",
           "deal_product_groups",
           "deal_best_price_board",
+          "deal_llm_review_queue",
           "deal_watch_insights",
           "deal_watch_identity",
           "deal_schedule_advice",
@@ -174,6 +175,7 @@ agents: {
 | `deal_market_check` | Compare one watch against likely same-product watches already in the current store. |
 | `deal_product_groups` | Cluster likely same-product watches across the store or a saved view and summarize group spreads. |
 | `deal_best_price_board` | Rank grouped same-product opportunities by current internal spread and best-known watch. |
+| `deal_llm_review_queue` | Prepare low-confidence extraction or identity cases for optional manual or `llm-task` JSON review. |
 | `deal_watch_insights` | Explain one watch in depth: trend, volatility, glitch risk, and active signals. |
 | `deal_watch_identity` | Show stored product identifiers for a watch and any other watches sharing those identifiers. |
 | `deal_schedule_advice` | Recommend scan cadence by host or watch from observed history timing. |
@@ -197,12 +199,13 @@ Recommended first-run workflow:
 11. `deal_view_report`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
 12. `deal_product_groups` and `deal_best_price_board` once you have multiple same-product watches across retailers.
 13. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
-14. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
-15. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-16. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
-17. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
-18. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-19. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+14. `deal_llm_review_queue` if weak extraction or identity cases still need optional model-assisted review.
+15. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
+16. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+17. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+18. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+19. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+20. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -262,11 +265,30 @@ The analytics tools add:
 - `deal_market_check` for comparing likely same-product watches already in your own watch store
 - `deal_product_groups` for clustering likely same-product watches into explainable groups
 - `deal_best_price_board` for ranking current best-known internal prices by grouped market spread
+- `deal_llm_review_queue` for preparing optional JSON-only review payloads when extraction or identity still looks ambiguous
 - `deal_watch_insights` for one-watch explanations with sparkline context
 - `deal_watch_identity` for stored product identifiers and same-product watch matching inside the current store
 - `deal_schedule_advice` for host-level or watch-level scan cadence suggestions
 
 `deal_alerts` now includes `glitchScore` and `glitchReasons` so small models can distinguish normal threshold hits from suspicious freebie-like results.
+
+## Optional intelligence path
+
+Deal Hunter does **not** auto-invoke an LLM fallback inside the plugin today.
+
+That is intentional:
+
+- the clean built-in OpenClaw route is the bundled `llm-task` extension
+- current `llm-task` docs describe it as a bundled extension, not a stable community-plugin dependency surface
+- this package stays install-safe and provider-agnostic by avoiding a hidden runtime dependency on another plugin
+
+Instead, `deal_llm_review_queue` prepares the exact cases that would benefit from optional external review:
+
+- weak extraction cases
+- unresolved same-product identity cases
+- a prompt, input payload, and suggested JSON Schema for each candidate
+
+If you enable OpenClaw’s bundled `llm-task` separately, you can feed those payloads into your own workflow without making Deal Hunter itself harder to install or trust.
 
 `deal_watch_import` supports:
 

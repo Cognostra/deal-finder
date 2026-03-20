@@ -7,6 +7,7 @@ import {
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
+  buildLlmReviewQueue,
   buildMarketCheckSummary,
   buildProductGroupsSummary,
   buildQuickstartGuide,
@@ -541,6 +542,69 @@ describe("buildBestPriceBoard", () => {
     expect(board.opportunities[0]?.spread).toEqual({
       absolute: 20,
       percentFromBest: 7.1,
+    });
+  });
+});
+
+describe("buildLlmReviewQueue", () => {
+  it("prepares low-confidence extraction and identity cases without auto-invoking an LLM", () => {
+    const reviewStore: StoreFile = {
+      version: 2,
+      savedViews: [],
+      watches: [
+        {
+          id: "watch-1",
+          url: "http://shop.test/a",
+          label: "Weak Extraction",
+          enabled: true,
+          createdAt: "2026-03-20T00:00:00.000Z",
+          lastSnapshot: {
+            title: "Mystery Product",
+            canonicalTitle: "mystery product",
+            fetchedAt: "2026-03-20T00:00:00.000Z",
+          },
+        },
+        {
+          id: "watch-2",
+          url: "http://shop.test/b",
+          label: "Peer A",
+          enabled: true,
+          createdAt: "2026-03-20T00:01:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5",
+            canonicalTitle: "sony wh-1000xm5",
+            fetchedAt: "2026-03-20T00:01:00.000Z",
+            price: 299.99,
+            currency: "USD",
+          },
+        },
+        {
+          id: "watch-3",
+          url: "http://alt-shop.test/c",
+          label: "Peer B",
+          enabled: true,
+          createdAt: "2026-03-20T00:02:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5 Wireless Headphones",
+            canonicalTitle: "sony wh-1000xm5",
+            fetchedAt: "2026-03-20T00:02:00.000Z",
+            price: 279.99,
+            currency: "USD",
+          },
+        },
+      ],
+    };
+
+    const queue = buildLlmReviewQueue(reviewStore, 10);
+    expect(queue.integrationStatus).toBe("deferred_cleanly");
+    expect(queue.candidateCount).toBeGreaterThanOrEqual(2);
+    expect(queue.candidates.find((item) => item.watchId === "watch-1")).toMatchObject({
+      type: "extraction_review",
+      priority: "medium",
+    });
+    expect(queue.candidates.find((item) => item.watchId === "watch-2")).toMatchObject({
+      type: "identity_resolution",
+      priority: "medium",
     });
   });
 });

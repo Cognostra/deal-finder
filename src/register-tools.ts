@@ -11,6 +11,7 @@ import {
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
+  buildLlmReviewQueue,
   buildMarketCheckSummary,
   buildProductGroupsSummary,
   buildQuickstartGuide,
@@ -1437,6 +1438,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_market_check",
               "deal_product_groups",
               "deal_best_price_board",
+              "deal_llm_review_queue",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1469,6 +1471,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_market_check",
               "deal_product_groups",
               "deal_best_price_board",
+              "deal_llm_review_queue",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1494,7 +1497,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_scan",
             ],
             examplePrompt:
-              "Use deal_view_report for my GPU alerts view, then use deal_best_price_board and deal_workflow_best_opportunities to explain which watch looks like the strongest real deal right now.",
+              "Use deal_view_report for my GPU alerts view, then use deal_best_price_board, deal_workflow_best_opportunities, and deal_llm_review_queue if any results still look ambiguous.",
           },
           cron: {
             example:
@@ -1511,7 +1514,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           },
           troubleshooting: {
             firstChecks: ["deal_doctor", "deal_health", "deal_fetch_url"],
-            note: "If a scan is blocked, verify the target host against your allowedHosts and blockedHosts policy. Use deal_extraction_debug when parsed fields look suspicious.",
+            note: "If a scan is blocked, verify the target host against your allowedHosts and blockedHosts policy. Use deal_extraction_debug when parsed fields look suspicious, and deal_llm_review_queue when you want a prepared manual review queue for low-confidence cases.",
           },
           privacy: {
             storeNote: "Watch metadata and committed scan history are stored in the configured JSON store path.",
@@ -1922,6 +1925,28 @@ export function registerDealTools(api: OpenClawPluginApi): void {
             minMatchScore: params.minMatchScore,
             limit: params.limit ?? 20,
           }),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_llm_review_queue",
+      label: "Deal Hunter",
+      description: "Prepare low-confidence extraction or identity cases for optional manual or llm-task-based JSON review without making this plugin depend on llm-task.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildLlmReviewQueue(scopedStore, params.limit ?? 10),
         });
       },
     },
