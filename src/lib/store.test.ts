@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { addWatch, appendWatchHistory, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
+import { addWatch, appendWatchHistory, importWatches, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
 
 let tempDirs: string[] = [];
 
@@ -194,6 +194,107 @@ describe("store", () => {
       price: 15,
       changeType: "price_drop",
       alertSeverity: "high",
+    });
+  });
+
+  it("imports watches in append mode without overwriting existing entries", () => {
+    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const existing = addWatch(store, { url: "http://shop.test/a", label: "Existing" });
+
+    const result = importWatches(
+      store,
+      [
+        {
+          id: existing.id,
+          url: "http://shop.test/a",
+          label: "Imported Copy",
+          enabled: false,
+        },
+      ],
+      "append",
+    );
+
+    expect(result).toMatchObject({
+      added: 1,
+      updated: 0,
+      replaced: false,
+    });
+    expect(store.watches).toHaveLength(2);
+    expect(store.watches[0]?.label).toBe("Existing");
+    expect(store.watches[1]?.label).toBe("Imported Copy");
+  });
+
+  it("imports watches in upsert mode by id or url", () => {
+    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const first = addWatch(store, { url: "http://shop.test/a", label: "Alpha" });
+    const second = addWatch(store, { url: "http://shop.test/b", label: "Bravo" });
+
+    const result = importWatches(
+      store,
+      [
+        {
+          id: first.id,
+          url: "http://shop.test/a",
+          label: "Alpha Updated",
+          enabled: false,
+        },
+        {
+          url: "http://shop.test/b",
+          label: "Bravo Updated",
+          maxPrice: 25,
+        },
+        {
+          url: "http://shop.test/c",
+          label: "Charlie",
+        },
+      ],
+      "upsert",
+    );
+
+    expect(result).toMatchObject({
+      added: 1,
+      updated: 2,
+      matchedById: 1,
+      matchedByUrl: 1,
+    });
+    expect(store.watches).toHaveLength(3);
+    expect(store.watches.find((watch) => watch.id === first.id)).toMatchObject({
+      label: "Alpha Updated",
+      enabled: false,
+    });
+    expect(store.watches.find((watch) => watch.id === second.id)).toMatchObject({
+      label: "Bravo Updated",
+      maxPrice: 25,
+    });
+  });
+
+  it("imports watches in replace mode by swapping the watchlist", () => {
+    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    addWatch(store, { url: "http://shop.test/a", label: "Old" });
+
+    const result = importWatches(
+      store,
+      [
+        {
+          id: "imported-1",
+          url: "http://shop.test/new",
+          label: "New",
+          createdAt: "2026-03-20T00:00:00.000Z",
+        },
+      ],
+      "replace",
+    );
+
+    expect(result).toMatchObject({
+      added: 1,
+      updated: 0,
+      replaced: true,
+    });
+    expect(store.watches).toHaveLength(1);
+    expect(store.watches[0]).toMatchObject({
+      id: "imported-1",
+      url: "http://shop.test/new",
+      label: "New",
     });
   });
 });

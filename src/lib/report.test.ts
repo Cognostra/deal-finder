@@ -177,6 +177,7 @@ describe("buildSampleSetup", () => {
     expect(sample.installCommand).toContain("openclaw plugins install");
     expect(sample.allowlist).toContain("deal_watch_add");
     expect(sample.allowlist).toContain("deal_history");
+    expect(sample.allowlist).toContain("deal_watch_import");
     expect(sample.examplePrompts.length).toBeGreaterThan(0);
   });
 });

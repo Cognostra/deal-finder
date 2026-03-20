@@ -44,6 +44,49 @@ export function addWatch(store: StoreFile, partial: Omit<Watch, "id" | "createdA
   return watch;
 }
 
+export type ImportedWatchInput = {
+  id?: string;
+  url: string;
+  label?: string;
+  maxPrice?: number;
+  percentDrop?: number;
+  keywords?: string[];
+  checkIntervalHint?: string;
+  enabled?: boolean;
+  createdAt?: string;
+  lastSnapshot?: Watch["lastSnapshot"];
+  history?: WatchHistoryEntry[];
+};
+
+export type ImportMode = "append" | "upsert" | "replace";
+
+function cloneWatchSnapshot(snapshot: Watch["lastSnapshot"] | undefined): Watch["lastSnapshot"] {
+  return snapshot ? { ...snapshot } : undefined;
+}
+
+function cloneHistory(history: WatchHistoryEntry[] | undefined): WatchHistoryEntry[] | undefined {
+  return history?.map((entry) => ({
+    ...entry,
+    alerts: entry.alerts ? [...entry.alerts] : undefined,
+  }));
+}
+
+function materializeImportedWatch(input: ImportedWatchInput, options?: { preserveId?: boolean }): Watch {
+  return {
+    id: options?.preserveId && input.id ? input.id : randomUUID(),
+    url: input.url,
+    label: input.label,
+    maxPrice: input.maxPrice,
+    percentDrop: input.percentDrop,
+    keywords: input.keywords ? [...input.keywords] : undefined,
+    checkIntervalHint: input.checkIntervalHint,
+    enabled: input.enabled ?? true,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    lastSnapshot: cloneWatchSnapshot(input.lastSnapshot),
+    history: cloneHistory(input.history),
+  };
+}
+
 export function removeWatch(store: StoreFile, id: string): boolean {
   const i = store.watches.findIndex((w) => w.id === id);
   if (i === -1) return false;
@@ -142,4 +185,66 @@ export function setWatchEnabled(store: StoreFile, ids: string[], enabled: boolea
   }
 
   return { updatedIds, missingIds };
+}
+
+export function importWatches(
+  store: StoreFile,
+  watches: ImportedWatchInput[],
+  mode: ImportMode,
+): {
+  added: number;
+  updated: number;
+  replaced: boolean;
+  imported: Watch[];
+  matchedById: number;
+  matchedByUrl: number;
+} {
+  const imported: Watch[] = [];
+  let added = 0;
+  let updated = 0;
+  let matchedById = 0;
+  let matchedByUrl = 0;
+
+  if (mode === "replace") {
+    store.watches = [];
+  }
+
+  for (const incoming of watches) {
+    if (mode !== "append") {
+      const existingById = incoming.id ? store.watches.find((watch) => watch.id === incoming.id) : undefined;
+      if (existingById) {
+        Object.assign(existingById, materializeImportedWatch(incoming, { preserveId: true }));
+        imported.push(existingById);
+        updated += 1;
+        matchedById += 1;
+        continue;
+      }
+
+      const existingByUrl = store.watches.find((watch) => watch.url === incoming.url);
+      if (existingByUrl) {
+        const replacement = materializeImportedWatch(incoming, { preserveId: true });
+        replacement.id = existingByUrl.id;
+        replacement.createdAt = existingByUrl.createdAt;
+        Object.assign(existingByUrl, replacement);
+        imported.push(existingByUrl);
+        updated += 1;
+        matchedByUrl += 1;
+        continue;
+      }
+    }
+
+    const addedWatch = materializeImportedWatch(incoming, { preserveId: mode === "replace" || mode === "upsert" });
+    store.watches.push(addedWatch);
+    imported.push(addedWatch);
+    added += 1;
+  }
+
+  return {
+    added,
+    updated,
+    replaced: mode === "replace",
+    imported,
+    matchedById,
+    matchedByUrl,
+  };
 }

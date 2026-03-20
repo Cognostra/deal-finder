@@ -437,6 +437,8 @@ export function buildSampleSetup() {
       "deal_watch_update",
       "deal_watch_set_enabled",
       "deal_watch_search",
+      "deal_watch_export",
+      "deal_watch_import",
       "deal_watch_remove",
       "deal_scan",
       "deal_fetch_url",
@@ -454,6 +456,7 @@ export function buildSampleSetup() {
       "Use deal_watch_add to add a watch for https://example.com/product and then use deal_scan with commit true.",
       "Use deal_watch_search to show me disabled watches and any watches currently showing threshold or keyword signals.",
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
+      "Use deal_watch_export to back up my watches, then prepare a deal_watch_import dry run for another workspace.",
     ],
     cronExample:
       "openclaw cron add --name \"Deal scan\" --cron \"0 * * * *\" --session isolated --message \"Run deal_scan with commit true for all enabled watches. Summarize any alerts.\" --announce",

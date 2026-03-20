@@ -79,6 +79,8 @@ agents: {
           "deal_watch_update",
           "deal_watch_set_enabled",
           "deal_watch_search",
+          "deal_watch_export",
+          "deal_watch_import",
           "deal_watch_remove",
           "deal_scan",
           "deal_fetch_url",
@@ -106,6 +108,8 @@ agents: {
 | `deal_watch_update` | Update a watch’s URL, thresholds, label, keywords, or enabled state. |
 | `deal_watch_set_enabled` | Enable or disable one or more watches in bulk. |
 | `deal_watch_search` | Search/filter/sort watches by query, enabled state, snapshot state, signals, or price. |
+| `deal_watch_export` | Export watches, optionally including snapshots and history, for backup or migration. |
+| `deal_watch_import` | Import watches with `append`, `upsert`, `replace`, and `dryRun` support. |
 | `deal_watch_remove` | Remove by `watchId`. |
 | `deal_scan` | Scan all enabled watches (or `watchIds`); `commit: false` dry-run. |
 | `deal_fetch_url` | One-off capped fetch + heuristic extraction. |
@@ -128,8 +132,10 @@ Recommended first-run workflow:
 4. `deal_watch_search` to inspect watches and current threshold/keyword signals.
 5. `deal_scan` with `commit: true` to capture snapshots.
 6. `deal_history` and `deal_alerts` to inspect recent movement and ranked active signals.
-7. `deal_watch_update` or `deal_watch_set_enabled` as the watchlist grows.
-8. `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+7. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+8. `deal_watch_import` with `dryRun: true` before applying shared or migrated watchlists.
+9. `deal_watch_update` or `deal_watch_set_enabled` as the watchlist grows.
+10. `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -156,6 +162,13 @@ Committed scans now build bounded per-watch history so the plugin can report:
 - `glitchCandidates` for near-zero or extreme-drop cases worth manual review
 
 `deal_alerts` now includes `glitchScore` and `glitchReasons` so small models can distinguish normal threshold hits from suspicious freebie-like results.
+
+`deal_watch_import` supports:
+
+- `append` to always create new watches
+- `upsert` to match by `id` first, then `url`
+- `replace` to swap the current watchlist with the imported one
+- `dryRun` to preview the result before writing
 
 Network guardrails:
 
