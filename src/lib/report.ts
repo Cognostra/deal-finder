@@ -21,6 +21,79 @@ function getWatchIdentityFields(watch: Watch): Array<{ field: "brand" | "modelId
     .map(([field, value]) => ({ field, value }));
 }
 
+function getIdentityFieldWeight(field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"): number {
+  if (field === "gtin") return 100;
+  if (field === "asin") return 95;
+  if (field === "mpn") return 85;
+  if (field === "sku") return 75;
+  if (field === "modelId") return 70;
+  return 20;
+}
+
+function buildProductMatchCandidates(
+  anchor: Watch,
+  watches: Watch[],
+  options?: { includeLooseTitleFallback?: boolean },
+): Array<{
+  watchId: string;
+  label?: string;
+  url: string;
+  latestPrice?: number;
+  sharedFields: string[];
+  matchScore: number;
+  matchReasons: string[];
+}> {
+  const anchorSnapshot = anchor.lastSnapshot;
+  const anchorIdentity = getWatchIdentityFields(anchor);
+  const anchorIdentityMap = new Map(anchorIdentity.map((identifier) => [`${identifier.field}:${identifier.value}`, identifier.field]));
+  const anchorTitle = anchorSnapshot?.canonicalTitle;
+
+  return watches
+    .filter((candidate) => candidate.id !== anchor.id)
+    .map((candidate) => {
+      const candidateIdentity = getWatchIdentityFields(candidate);
+      const sharedIdentity = candidateIdentity
+        .filter((identifier) => anchorIdentityMap.has(`${identifier.field}:${identifier.value}`))
+        .map((identifier) => identifier.field);
+
+      let matchScore = sharedIdentity.reduce(
+        (score, field) => score + getIdentityFieldWeight(field as "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"),
+        0,
+      );
+      const matchReasons = sharedIdentity.map((field) => `Shared ${field}.`);
+
+      if (
+        options?.includeLooseTitleFallback !== false &&
+        anchorTitle &&
+        candidate.lastSnapshot?.canonicalTitle &&
+        candidate.lastSnapshot.canonicalTitle === anchorTitle
+      ) {
+        matchScore += 30;
+        matchReasons.push("Canonical titles match.");
+      }
+
+      if (anchorSnapshot?.brand && candidate.lastSnapshot?.brand && anchorSnapshot.brand === candidate.lastSnapshot.brand) {
+        matchScore += 10;
+        matchReasons.push("Brands match.");
+      }
+
+      if (matchScore <= 0) return null;
+
+      return {
+        watchId: candidate.id,
+        label: candidate.label,
+        url: candidate.url,
+        latestPrice: candidate.lastSnapshot?.price,
+        sharedFields: [...new Set(sharedIdentity)],
+        matchScore: Math.min(100, matchScore),
+        matchReasons,
+      };
+    })
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+    .sort((a, b) => b.matchScore - a.matchScore || (a.latestPrice ?? Number.POSITIVE_INFINITY) - (b.latestPrice ?? Number.POSITIVE_INFINITY))
+    .slice(0, 12);
+}
+
 function getHistoryPrices(watch: Watch): number[] {
   return getHistoryEntries(watch)
     .map((entry) => entry.price)
@@ -556,6 +629,7 @@ export function buildSampleSetup() {
       "deal_alerts",
       "deal_trends",
       "deal_top_drops",
+      "deal_market_check",
       "deal_watch_insights",
       "deal_watch_identity",
       "deal_schedule_advice",
@@ -572,6 +646,7 @@ export function buildSampleSetup() {
       "Use deal_watch_dedupe in dry-run mode and show me any likely duplicate watches before I clean up the list.",
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
       "Use deal_top_drops and deal_trends to show me the strongest current deals with context.",
+      "Use deal_market_check for my best-looking deal and show me whether the current watch is actually the best price in my store.",
       "Use deal_watch_insights for my most volatile watch and explain whether it looks real or noisy.",
       "Use deal_watch_identity for my best current deal and tell me whether any other watches appear to be the same product.",
       "Use deal_watch_export to back up my watches, then prepare a deal_watch_import dry run for another workspace.",
@@ -592,7 +667,7 @@ export function buildQuickstartGuide() {
       "Use deal_saved_view_create for repeat searches once your watchlist grows beyond a few items.",
       "Use deal_watch_tag or deal_watch_bulk_update once you have enough watches to organize by tag or group.",
       "Run deal_scan with commit true to capture the first snapshot.",
-      "Use deal_alerts, deal_trends, deal_watch_identity, and deal_report to inspect what changed.",
+      "Use deal_alerts, deal_trends, deal_market_check, deal_watch_identity, and deal_report to inspect what changed.",
       "Use deal_watch_export before large watchlist edits or migration.",
       "Use deal_watch_import_url with dryRun first before applying a shared remote watchlist.",
     ],
@@ -933,24 +1008,13 @@ export function buildWatchIdentitySummary(
   }
 
   const identifierMap = new Map(identifiers.map((identifier) => [`${identifier.field}:${identifier.value}`, identifier.field]));
-  const relatedWatches = store.watches
-    .filter((candidate) => candidate.id !== watch.id)
-    .map((candidate) => {
-      const sharedFields = getWatchIdentityFields(candidate)
-        .filter((identifier) => identifierMap.has(`${identifier.field}:${identifier.value}`))
-        .map((identifier) => identifier.field);
-      if (!sharedFields.length) return null;
-      return {
-        watchId: candidate.id,
-        label: candidate.label,
-        url: candidate.url,
-        sharedFields,
-        latestPrice: candidate.lastSnapshot?.price,
-      };
-    })
-    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
-    .sort((a, b) => b.sharedFields.length - a.sharedFields.length || a.url.localeCompare(b.url))
-    .slice(0, 10);
+  const relatedWatches = buildProductMatchCandidates(watch, store.watches, { includeLooseTitleFallback: false }).map((candidate) => ({
+    watchId: candidate.watchId,
+    label: candidate.label,
+    url: candidate.url,
+    sharedFields: candidate.sharedFields,
+    latestPrice: candidate.latestPrice,
+  }));
 
   if (relatedWatches.length) {
     reasons.push(`Found ${relatedWatches.length} other watch${relatedWatches.length === 1 ? "" : "es"} sharing stored identifiers.`);
@@ -967,6 +1031,78 @@ export function buildWatchIdentitySummary(
     strength,
     reasons,
     relatedWatches,
+  };
+}
+
+export function buildMarketCheckSummary(
+  store: StoreFile,
+  watch: Watch,
+  options?: { includeLooseTitleFallback?: boolean },
+): {
+  watchId: string;
+  label?: string;
+  url: string;
+  anchorPrice?: number;
+  identity: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string }>;
+  matchCount: number;
+  bestKnownPrice?: number;
+  highestKnownPrice?: number;
+  spread?: {
+    absolute: number;
+    percentFromBest: number;
+  };
+  matches: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    latestPrice?: number;
+    sharedFields: string[];
+    matchScore: number;
+    matchReasons: string[];
+  }>;
+  reasons: string[];
+} {
+  const anchorPrice = watch.lastSnapshot?.price;
+  const identity = getWatchIdentityFields(watch);
+  const matches = buildProductMatchCandidates(watch, store.watches, options);
+  const knownPrices = [anchorPrice, ...matches.map((match) => match.latestPrice)].filter((price): price is number => price != null);
+  const bestKnownPrice = knownPrices.length ? Math.min(...knownPrices) : undefined;
+  const highestKnownPrice = knownPrices.length ? Math.max(...knownPrices) : undefined;
+  const spread =
+    bestKnownPrice != null && highestKnownPrice != null && highestKnownPrice > bestKnownPrice
+      ? {
+          absolute: Number((highestKnownPrice - bestKnownPrice).toFixed(2)),
+          percentFromBest: Number((((highestKnownPrice - bestKnownPrice) / bestKnownPrice) * 100).toFixed(1)),
+        }
+      : undefined;
+
+  const reasons: string[] = [];
+  if (!identity.length) {
+    reasons.push("No strong stored identifiers are available on the anchor watch; comparison may rely on title/brand similarity.");
+  } else {
+    reasons.push(`Anchor identifiers: ${identity.map((identifier) => `${identifier.field}=${identifier.value}`).join(", ")}.`);
+  }
+  if (matches.length) {
+    reasons.push(`Found ${matches.length} likely same-product watch${matches.length === 1 ? "" : "es"} in the current store.`);
+  } else {
+    reasons.push("No likely same-product watches were found in the current store.");
+  }
+  if (spread) {
+    reasons.push(`Observed internal market spread is ${spread.absolute.toFixed(2)} (${spread.percentFromBest.toFixed(1)}% from the best known price).`);
+  }
+
+  return {
+    watchId: watch.id,
+    label: watch.label,
+    url: watch.url,
+    anchorPrice,
+    identity,
+    matchCount: matches.length,
+    bestKnownPrice,
+    highestKnownPrice,
+    spread,
+    matches,
+    reasons,
   };
 }
 

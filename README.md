@@ -108,6 +108,7 @@ agents: {
           "deal_alerts",
           "deal_trends",
           "deal_top_drops",
+          "deal_market_check",
           "deal_watch_insights",
           "deal_watch_identity",
           "deal_schedule_advice",
@@ -152,6 +153,7 @@ agents: {
 | `deal_alerts` | Rank current threshold, keyword, and recent high-severity watch signals. |
 | `deal_trends` | Summarize falling, rising, flat, and volatile watches with compact sparklines. |
 | `deal_top_drops` | Rank the strongest deals by discount from peak or the latest committed drop. |
+| `deal_market_check` | Compare one watch against likely same-product watches already in the current store. |
 | `deal_watch_insights` | Explain one watch in depth: trend, volatility, glitch risk, and active signals. |
 | `deal_watch_identity` | Show stored product identifiers for a watch and any other watches sharing those identifiers. |
 | `deal_schedule_advice` | Recommend scan cadence by host or watch from observed history timing. |
@@ -176,7 +178,7 @@ Recommended first-run workflow:
 12. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
 13. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
 14. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-15. `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+15. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -233,6 +235,7 @@ The analytics tools add:
 
 - `deal_trends` for compact per-watch direction and volatility summaries
 - `deal_top_drops` for ranking discounts against historical peaks or the latest committed move
+- `deal_market_check` for comparing likely same-product watches already in your own watch store
 - `deal_watch_insights` for one-watch explanations with sparkline context
 - `deal_watch_identity` for stored product identifiers and same-product watch matching inside the current store
 - `deal_schedule_advice` for host-level or watch-level scan cadence suggestions

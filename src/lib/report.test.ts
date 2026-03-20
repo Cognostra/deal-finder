@@ -6,6 +6,7 @@ import {
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
+  buildMarketCheckSummary,
   buildQuickstartGuide,
   buildScheduleAdvice,
   buildSampleSetup,
@@ -188,6 +189,7 @@ describe("buildSampleSetup", () => {
     expect(sample.allowlist).toContain("deal_watch_import");
     expect(sample.allowlist).toContain("deal_watch_import_url");
     expect(sample.allowlist).toContain("deal_saved_view_create");
+    expect(sample.allowlist).toContain("deal_market_check");
     expect(sample.examplePrompts.length).toBeGreaterThan(0);
   });
 });
@@ -332,6 +334,78 @@ describe("buildWatchIdentitySummary", () => {
     expect(summary.relatedWatches[0]).toMatchObject({
       watchId: "watch-b",
       sharedFields: ["brand", "modelId"],
+    });
+  });
+});
+
+describe("buildMarketCheckSummary", () => {
+  it("compares likely same-product watches and summarizes spread", () => {
+    const marketStore: StoreFile = {
+      version: 2,
+      savedViews: [],
+      watches: [
+        {
+          id: "watch-a",
+          url: "http://shop.test/a",
+          label: "Headphones A",
+          enabled: true,
+          createdAt: "2026-03-20T00:00:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5 Wireless Headphones",
+            canonicalTitle: "sony wh-1000xm5 wireless headphones",
+            brand: "Sony",
+            modelId: "WH-1000XM5",
+            mpn: "WH1000XM5/B",
+            price: 299.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:00:00.000Z",
+          },
+        },
+        {
+          id: "watch-b",
+          url: "http://shop.test/b",
+          label: "Headphones B",
+          enabled: true,
+          createdAt: "2026-03-20T00:05:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5",
+            canonicalTitle: "sony wh-1000xm5",
+            brand: "Sony",
+            modelId: "WH-1000XM5",
+            price: 279.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:05:00.000Z",
+          },
+        },
+        {
+          id: "watch-c",
+          url: "http://shop.test/c",
+          label: "Different Product",
+          enabled: true,
+          createdAt: "2026-03-20T00:10:00.000Z",
+          lastSnapshot: {
+            title: "Desk Lamp",
+            canonicalTitle: "desk lamp",
+            brand: "Acme",
+            price: 19.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:10:00.000Z",
+          },
+        },
+      ],
+    };
+
+    const summary = buildMarketCheckSummary(marketStore, marketStore.watches[0]!);
+    expect(summary.matchCount).toBe(1);
+    expect(summary.bestKnownPrice).toBe(279.99);
+    expect(summary.highestKnownPrice).toBe(299.99);
+    expect(summary.spread).toEqual({
+      absolute: 20,
+      percentFromBest: 7.1,
+    });
+    expect(summary.matches[0]).toMatchObject({
+      watchId: "watch-b",
+      matchScore: 100,
     });
   });
 });

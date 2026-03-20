@@ -10,6 +10,7 @@ import {
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
+  buildMarketCheckSummary,
   buildQuickstartGuide,
   buildScheduleAdvice,
   buildSampleSetup,
@@ -1183,6 +1184,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_alerts",
               "deal_trends",
               "deal_top_drops",
+              "deal_market_check",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1210,6 +1212,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_alerts",
               "deal_trends",
               "deal_top_drops",
+              "deal_market_check",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1229,7 +1232,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_scan",
             ],
             examplePrompt:
-              "Use deal_saved_view_run for my GPU alerts view, then use deal_top_drops, deal_watch_identity, and deal_watch_insights to explain which watch looks like the strongest real deal right now.",
+              "Use deal_saved_view_run for my GPU alerts view, then use deal_top_drops, deal_market_check, deal_watch_identity, and deal_watch_insights to explain which watch looks like the strongest real deal right now.",
           },
           cron: {
             example:
@@ -1481,6 +1484,34 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           };
         }
         return jsonResult(buildWatchIdentitySummary(store, watch));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_market_check",
+      label: "Deal Hunter",
+      description: "Compare one watch against likely same-product watches already in the current store and summarize price spread.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        includeLooseTitleFallback: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "watch not found" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+        return jsonResult(
+          buildMarketCheckSummary(store, watch, {
+            includeLooseTitleFallback: params.includeLooseTitleFallback,
+          }),
+        );
       },
     },
     { optional: false },
