@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertPublicHostnameResolution, validateTargetUrl } from "./url-policy.js";
+import { assertPublicHostnameResolution, canonicalizeWatchUrl, validateTargetUrl } from "./url-policy.js";
 
 describe("validateTargetUrl", () => {
   it("accepts and normalizes a public https URL", () => {
@@ -64,5 +64,12 @@ describe("assertPublicHostnameResolution", () => {
     await expect(
       assertPublicHostnameResolution("evil.test", async () => [{ address: "10.0.0.5" }]),
     ).rejects.toThrow(/resolves to private or non-public IP/i);
+  });
+});
+
+describe("canonicalizeWatchUrl", () => {
+  it("strips common tracking params, fragments, and default ports", () => {
+    const url = canonicalizeWatchUrl("https://Example.com:443/deals/item/?utm_source=newsletter&gclid=abc&id=7#details");
+    expect(url.toString()).toBe("https://example.com/deals/item?id=7");
   });
 });

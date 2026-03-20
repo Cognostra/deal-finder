@@ -36,12 +36,16 @@ describe("searchWatches", () => {
     makeWatch({
       id: "watch-a",
       label: "Camera",
+      group: "electronics",
+      tags: ["camera", "premium"],
       createdAt: "2026-03-18T00:00:00.000Z",
       lastSnapshot: { title: "Camera Pro", canonicalTitle: "camera pro", price: 800, fetchedAt: "2026-03-18T00:00:00.000Z" },
     }),
     makeWatch({
       id: "watch-b",
       label: "Book",
+      group: "books",
+      tags: ["reading", "gift"],
       enabled: false,
       createdAt: "2026-03-19T00:00:00.000Z",
       maxPrice: 20,
@@ -62,6 +66,11 @@ describe("searchWatches", () => {
   it("filters by enabled state and signals", () => {
     const result = searchWatches(watches, { enabled: false, hasSignals: true });
     expect(result.map((watch) => watch.id)).toEqual(["watch-b"]);
+  });
+
+  it("filters by tag and group", () => {
+    const result = searchWatches(watches, { tag: "camera", group: "electronics" });
+    expect(result.map((watch) => watch.id)).toEqual(["watch-a"]);
   });
 
   it("sorts by price ascending when requested", () => {

@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { addWatch, appendWatchHistory, importWatches, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
+import { addWatch, appendWatchHistory, bulkUpdateWatches, importWatches, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
 
 let tempDirs: string[] = [];
 
@@ -76,6 +76,8 @@ describe("store", () => {
 
     const updated = updateWatch(store, watch.id, {
       label: "Updated Demo",
+      group: "Deals",
+      tags: ["Rare", "rare", "Clearance "],
       maxPrice: null,
       keywords: ["clearance"],
       checkIntervalHint: null,
@@ -85,6 +87,8 @@ describe("store", () => {
 
     expect(updated).toMatchObject({
       label: "Updated Demo",
+      group: "Deals",
+      tags: ["rare", "clearance"],
       maxPrice: undefined,
       keywords: ["clearance"],
       checkIntervalHint: undefined,
@@ -105,6 +109,25 @@ describe("store", () => {
       missingIds: ["missing-watch"],
     });
     expect(store.watches.every((watch) => watch.enabled)).toBe(true);
+  });
+
+  it("bulk-updates tags and group metadata", () => {
+    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const first = addWatch(store, { url: "http://shop.test/a", tags: ["alpha"], group: "Old" });
+    const second = addWatch(store, { url: "http://shop.test/b" });
+
+    const result = bulkUpdateWatches(store, [first.id, second.id], {
+      group: "Featured",
+      addTags: ["Rare", "Sale"],
+      removeTags: ["alpha"],
+    });
+
+    expect(result).toEqual({
+      updatedIds: [first.id, second.id],
+      missingIds: [],
+    });
+    expect(store.watches[0]).toMatchObject({ group: "Featured", tags: ["rare", "sale"] });
+    expect(store.watches[1]).toMatchObject({ group: "Featured", tags: ["rare", "sale"] });
   });
 
   it("records only meaningful committed history states", () => {

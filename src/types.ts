@@ -43,6 +43,8 @@ export type Watch = {
   id: string;
   url: string;
   label?: string;
+  group?: string;
+  tags?: string[];
   maxPrice?: number;
   percentDrop?: number;
   keywords?: string[];
@@ -73,6 +75,16 @@ export type ExtractedListing = {
   price?: number;
   currency?: string;
   snippet?: string;
+};
+
+export type ExtractionDebugInfo = {
+  matchedExtractor?: string;
+  titleCandidates: Array<{ source: string; value: string }>;
+  priceCandidates: Array<{ source: string; value: number; currency?: string }>;
+  chosen: {
+    title?: { source: string; value: string };
+    price?: { source: string; value: number; currency?: string };
+  };
 };
 
 export type ExtractionConfidence = {

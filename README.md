@@ -2,6 +2,12 @@
 
 OpenClaw plugin: watch product URLs, scan with **conditional GET** (`ETag` / `Last-Modified`), **streaming byte caps**, shared **undici** connection pooling, and TypeScript heuristic deal signals.
 
+The extraction stack is layered:
+
+- retailer-aware extractors for common HTML patterns
+- JSON-LD / OpenGraph extraction
+- bounded regex fallback for visible prices
+
 ## Ethics & responsibility
 
 - You are responsible for complying with each site’s **terms of service** and `robots.txt`. This plugin does not bypass CAPTCHAs or anti-bot systems.
@@ -79,11 +85,15 @@ agents: {
           "deal_watch_update",
           "deal_watch_set_enabled",
           "deal_watch_search",
+          "deal_watch_bulk_update",
+          "deal_watch_tag",
+          "deal_watch_dedupe",
           "deal_watch_export",
           "deal_watch_import",
           "deal_watch_remove",
           "deal_scan",
           "deal_fetch_url",
+          "deal_extraction_debug",
           "deal_evaluate_text",
           "deal_help",
           "deal_quickstart",
@@ -91,6 +101,10 @@ agents: {
           "deal_health",
           "deal_history",
           "deal_alerts",
+          "deal_trends",
+          "deal_top_drops",
+          "deal_watch_insights",
+          "deal_schedule_advice",
           "deal_doctor",
           "deal_sample_setup"
         ]
@@ -108,12 +122,16 @@ agents: {
 | `deal_watch_add` | Add a URL with optional `maxPrice`, `percentDrop`, `keywords`. |
 | `deal_watch_update` | Update a watch’s URL, thresholds, label, keywords, or enabled state. |
 | `deal_watch_set_enabled` | Enable or disable one or more watches in bulk. |
-| `deal_watch_search` | Search/filter/sort watches by query, enabled state, snapshot state, signals, or price. |
+| `deal_watch_search` | Search/filter/sort watches by query, enabled state, snapshot state, signals, tag, group, or price. |
+| `deal_watch_bulk_update` | Bulk-update watches selected by ids or search filters; dry-run by default. |
+| `deal_watch_tag` | Add, remove, or replace tags and assign groups across matching watches. |
+| `deal_watch_dedupe` | Find or resolve likely duplicate watches using canonicalized URLs. |
 | `deal_watch_export` | Export watches, optionally including snapshots and history, for backup or migration. |
 | `deal_watch_import` | Import watches with `append`, `upsert`, `replace`, and `dryRun` support. |
 | `deal_watch_remove` | Remove by `watchId`. |
 | `deal_scan` | Scan all enabled watches (or `watchIds`); `commit: false` dry-run. |
 | `deal_fetch_url` | One-off capped fetch + heuristic extraction. |
+| `deal_extraction_debug` | Show heuristic extraction candidates, chosen fields, and confidence reasons for one URL. |
 | `deal_evaluate_text` | Score pasted text for “freebie / glitchy” wording (no network). |
 | `deal_help` | Show install, tool, cron, and safety guidance from inside OpenClaw. |
 | `deal_quickstart` | Show a first-run checklist, starter prompts, and privacy/safety reminders. |
@@ -121,6 +139,10 @@ agents: {
 | `deal_health` | Show configuration, storage, safety posture, and operational recommendations. |
 | `deal_history` | Show per-watch price history, recent deltas, and lowest/highest seen prices. |
 | `deal_alerts` | Rank current threshold, keyword, and recent high-severity watch signals. |
+| `deal_trends` | Summarize falling, rising, flat, and volatile watches with compact sparklines. |
+| `deal_top_drops` | Rank the strongest deals by discount from peak or the latest committed drop. |
+| `deal_watch_insights` | Explain one watch in depth: trend, volatility, glitch risk, and active signals. |
+| `deal_schedule_advice` | Recommend scan cadence by host or watch from observed history timing. |
 | `deal_doctor` | Run a lightweight sanity check for config and watchlist setup. |
 | `deal_sample_setup` | Show install, config, allowlist, prompt, and cron examples. |
 
@@ -133,12 +155,14 @@ Recommended first-run workflow:
 3. `deal_sample_setup` for ready-to-copy install/config/cron examples.
 4. `deal_watch_add` to create the first watch.
 5. `deal_watch_search` to inspect watches and current threshold/keyword signals.
-6. `deal_scan` with `commit: true` to capture snapshots.
-7. `deal_history` and `deal_alerts` to inspect recent movement and ranked active signals.
-8. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-9. `deal_watch_import` with `dryRun: true` before applying shared or migrated watchlists.
-10. `deal_watch_update` or `deal_watch_set_enabled` as the watchlist grows.
-11. `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+6. `deal_watch_tag` or `deal_watch_bulk_update` to organize watches into tags and groups as the list grows.
+7. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
+8. `deal_scan` with `commit: true` to capture snapshots.
+9. `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
+10. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+11. `deal_watch_import` with `dryRun: true` before applying shared or migrated watchlists.
+12. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+13. `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -150,6 +174,23 @@ Recommended first-run workflow:
 - top-level `summary` and `rankedAlerts`
 
 Snapshot and extraction metadata also include `canonicalTitle`, which normalizes cosmetic title differences for cleaner watch metadata and more stable agent summaries.
+
+The current retailer-aware extractor pack includes fixture-backed support for:
+
+- Amazon-style product pages
+- Best Buy-style product pages
+- eBay-style product pages
+- Target-style product pages
+- Walmart-style product pages
+- Newegg-style product pages
+- Home Depot-style product pages
+
+`deal_extraction_debug` now shows:
+
+- which extractor matched, if any
+- title and price candidates by source
+- the chosen title/price source
+- extraction confidence reasons
 
 Committed scans now build bounded per-watch history so the plugin can report:
 
@@ -164,6 +205,13 @@ Committed scans now build bounded per-watch history so the plugin can report:
 - `noisyWatches` for products whose recent history looks unusually volatile
 - `glitchCandidates` for near-zero or extreme-drop cases worth manual review
 
+The analytics tools add:
+
+- `deal_trends` for compact per-watch direction and volatility summaries
+- `deal_top_drops` for ranking discounts against historical peaks or the latest committed move
+- `deal_watch_insights` for one-watch explanations with sparkline context
+- `deal_schedule_advice` for host-level or watch-level scan cadence suggestions
+
 `deal_alerts` now includes `glitchScore` and `glitchReasons` so small models can distinguish normal threshold hits from suspicious freebie-like results.
 
 `deal_watch_import` supports:
@@ -172,6 +220,13 @@ Committed scans now build bounded per-watch history so the plugin can report:
 - `upsert` to match by `id` first, then `url`
 - `replace` to swap the current watchlist with the imported one
 - `dryRun` to preview the result before writing
+
+Watch management now also includes:
+
+- URL canonicalization that strips common tracking params before storage and dedupe checks
+- optional `group` and `tags` metadata for organizing larger watchlists
+- bulk update and tag tools that are dry-run-first for safer agent workflows
+- dedupe reporting and duplicate resolution based on canonicalized URLs
 
 Network guardrails:
 
@@ -193,7 +248,8 @@ Network guardrails:
 - Use `deal_quickstart` if you want the shortest safe first-run path.
 - Use `deal_doctor` for a quick sanity check.
 - Use `deal_health` to inspect active limits, fetcher choice, and host-policy posture.
-- Use `deal_fetch_url` when extraction quality looks weak and you need to inspect the raw preview.
+- Use `deal_fetch_url` when you need a quick raw preview.
+- Use `deal_extraction_debug` when extraction quality looks weak and you want to inspect candidates, chosen fields, and confidence reasons.
 - If a URL is blocked, compare it against your `allowedHosts` and `blockedHosts` settings first.
 
 ## Proactive scans (cron)

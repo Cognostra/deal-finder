@@ -6,6 +6,17 @@ export type UrlPolicyConfig = {
   blockedHosts?: string[];
 };
 
+const TRACKING_QUERY_KEYS = new Set([
+  "fbclid",
+  "gclid",
+  "mc_cid",
+  "mc_eid",
+  "mkt_tok",
+  "srsltid",
+  "yclid",
+  "_ga",
+]);
+
 function normalizeHostname(hostname: string): string {
   const trimmed = hostname.trim().toLowerCase();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
@@ -162,6 +173,35 @@ export function validateTargetUrl(url: string, cfg: UrlPolicyConfig = {}): URL {
 
   if (isUnsafeIpLiteral(hostname)) {
     throw new Error(`deal-hunter: blocked private or non-public IP target "${hostname}"`);
+  }
+
+  return parsed;
+}
+
+export function canonicalizeWatchUrl(url: string, cfg: UrlPolicyConfig = {}): URL {
+  const parsed = validateTargetUrl(url, cfg);
+
+  parsed.hash = "";
+
+  if ((parsed.protocol === "http:" && parsed.port === "80") || (parsed.protocol === "https:" && parsed.port === "443")) {
+    parsed.port = "";
+  }
+
+  parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/");
+  if (parsed.pathname.length > 1 && parsed.pathname.endsWith("/")) {
+    parsed.pathname = parsed.pathname.slice(0, -1);
+  }
+
+  const keptParams = [...parsed.searchParams.entries()]
+    .filter(([key]) => {
+      const lowerKey = key.toLowerCase();
+      return !lowerKey.startsWith("utm_") && !TRACKING_QUERY_KEYS.has(lowerKey);
+    })
+    .sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue));
+
+  parsed.search = "";
+  for (const [key, value] of keptParams) {
+    parsed.searchParams.append(key, value);
   }
 
   return parsed;

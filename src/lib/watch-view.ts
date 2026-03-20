@@ -5,6 +5,8 @@ export type WatchSearchOptions = {
   enabled?: boolean;
   hasSnapshot?: boolean;
   hasSignals?: boolean;
+  tag?: string;
+  group?: string;
   sortBy?: "createdAt" | "label" | "price";
   descending?: boolean;
   limit?: number;
@@ -33,12 +35,16 @@ export function buildWatchSignals(watch: Watch): string[] {
 
 export function searchWatches(watches: Watch[], options: WatchSearchOptions): Watch[] {
   const query = options.query?.trim().toLowerCase();
+  const tag = options.tag?.trim().toLowerCase();
+  const group = options.group?.trim().toLowerCase();
   const sortBy = options.sortBy ?? "createdAt";
   const descending = options.descending ?? true;
 
   const filtered = watches.filter((watch) => {
     if (options.enabled != null && watch.enabled !== options.enabled) return false;
     if (options.hasSnapshot != null && Boolean(watch.lastSnapshot) !== options.hasSnapshot) return false;
+    if (tag && !watch.tags?.some((value) => value.toLowerCase() === tag)) return false;
+    if (group && (watch.group ?? "").toLowerCase() !== group) return false;
 
     const signals = buildWatchSignals(watch);
     if (options.hasSignals != null && Boolean(signals.length) !== options.hasSignals) return false;
@@ -49,8 +55,10 @@ export function searchWatches(watches: Watch[], options: WatchSearchOptions): Wa
       watch.id,
       watch.url,
       watch.label ?? "",
+      watch.group ?? "",
       watch.lastSnapshot?.title ?? "",
       watch.lastSnapshot?.canonicalTitle ?? "",
+      ...(watch.tags ?? []),
       ...(watch.keywords ?? []),
     ];
     return haystacks.some((value) => value.toLowerCase().includes(query));

@@ -4,20 +4,24 @@ import { jsonResult, withFileLock } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "./config.js";
 import { mergeCommittedScanResults, runScan } from "./lib/engine.js";
 import { cappedFetch } from "./lib/fetch.js";
-import { evaluateListingText, extractListing } from "./lib/heuristics.js";
+import { debugExtractListing, evaluateListingText } from "./lib/heuristics.js";
 import {
   buildAlertsSummary,
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
   buildQuickstartGuide,
+  buildScheduleAdvice,
   buildSampleSetup,
   buildStoreReport,
+  buildTopDropsSummary,
+  buildTrendsSummary,
+  buildWatchInsights,
 } from "./lib/report.js";
 import type { ImportedWatchInput } from "./lib/store.js";
-import { addWatch, getWatch, importWatches, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
+import { addWatch, bulkUpdateWatches, getWatch, importWatches, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
 import { buildWatchSignals, searchWatches } from "./lib/watch-view.js";
-import { validateTargetUrl } from "./lib/url-policy.js";
+import { canonicalizeWatchUrl, validateTargetUrl } from "./lib/url-policy.js";
 
 const LOCK_OPTS = {
   retries: { retries: 20, factor: 1.5, minTimeout: 40, maxTimeout: 800, randomize: true },
@@ -78,6 +82,7 @@ function toWatchView(watch: Awaited<ReturnType<typeof loadStore>>["watches"][num
     .filter((price): price is number => price != null);
   return {
     ...watch,
+    canonicalUrl: canonicalizeWatchUrl(watch.url).toString(),
     currentPrice: watch.lastSnapshot?.price,
     currentCurrency: watch.lastSnapshot?.currency,
     lastFetchedAt: watch.lastSnapshot?.fetchedAt,
@@ -93,6 +98,8 @@ const IMPORTED_WATCH_SCHEMA = Type.Object({
   id: Type.Optional(Type.String()),
   url: Type.String(),
   label: Type.Optional(Type.String()),
+  group: Type.Optional(Type.String()),
+  tags: Type.Optional(Type.Array(Type.String())),
   maxPrice: Type.Optional(Type.Number()),
   percentDrop: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
   keywords: Type.Optional(Type.Array(Type.String())),
@@ -135,6 +142,43 @@ const IMPORTED_WATCH_SCHEMA = Type.Object({
   ),
 });
 
+const WATCH_SELECTOR_SCHEMA = {
+  watchIds: Type.Optional(Type.Array(Type.String(), { description: "Explicit watch ids to target." })),
+  query: Type.Optional(Type.String()),
+  enabled: Type.Optional(Type.Boolean()),
+  hasSnapshot: Type.Optional(Type.Boolean()),
+  hasSignals: Type.Optional(Type.Boolean()),
+  tag: Type.Optional(Type.String()),
+  group: Type.Optional(Type.String()),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+} as const;
+
+function selectWatches(
+  store: Awaited<ReturnType<typeof loadStore>>,
+  selector: {
+    watchIds?: string[];
+    query?: string;
+    enabled?: boolean;
+    hasSnapshot?: boolean;
+    hasSignals?: boolean;
+    tag?: string;
+    group?: string;
+    limit?: number;
+  },
+) {
+  const explicitIds = selector.watchIds?.length ? new Set(selector.watchIds) : null;
+  const base = explicitIds ? store.watches.filter((watch) => explicitIds.has(watch.id)) : store.watches;
+  return searchWatches(base, {
+    query: selector.query,
+    enabled: selector.enabled,
+    hasSnapshot: selector.hasSnapshot,
+    hasSignals: selector.hasSignals,
+    tag: selector.tag,
+    group: selector.group,
+    limit: selector.limit,
+  });
+}
+
 export function registerDealTools(api: OpenClawPluginApi): void {
   const cfgBase = resolveDealConfig(api);
   const storePath = cfgBase.storePath;
@@ -171,6 +215,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       parameters: Type.Object({
         url: Type.String(),
         label: Type.Optional(Type.String()),
+        group: Type.Optional(Type.String()),
+        tags: Type.Optional(Type.Array(Type.String())),
         maxPrice: Type.Optional(Type.Number()),
         percentDrop: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
         keywords: Type.Optional(Type.Array(Type.String())),
@@ -179,11 +225,13 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       }),
       execute: async (_id, params) => {
         const cfg = resolveDealConfig(api);
-        const normalizedUrl = validateTargetUrl(params.url, cfg).toString();
+        const normalizedUrl = canonicalizeWatchUrl(params.url, cfg).toString();
         await withStore(async (store) => {
           addWatch(store, {
             url: normalizedUrl,
             label: params.label,
+            group: params.group,
+            tags: params.tags,
             maxPrice: params.maxPrice,
             percentDrop: params.percentDrop,
             keywords: params.keywords,
@@ -207,6 +255,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         watchId: Type.String(),
         url: Type.Optional(Type.String()),
         label: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        group: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        tags: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
         maxPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
         percentDrop: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 100 }), Type.Null()])),
         keywords: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
@@ -219,10 +269,12 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         let updatedWatch = null;
 
         await withStore(async (store) => {
-          const normalizedUrl = params.url ? validateTargetUrl(params.url, cfg).toString() : undefined;
+          const normalizedUrl = params.url ? canonicalizeWatchUrl(params.url, cfg).toString() : undefined;
           updatedWatch = updateWatch(store, params.watchId, {
             url: normalizedUrl,
             label: params.label,
+            group: params.group,
+            tags: params.tags,
             maxPrice: params.maxPrice,
             percentDrop: params.percentDrop,
             keywords: params.keywords,
@@ -373,7 +425,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         const mode = params.mode ?? "upsert";
         const normalizedWatches = params.watches.map((watch: ImportedWatchInput) => ({
           ...watch,
-          url: validateTargetUrl(watch.url, cfg).toString(),
+          url: canonicalizeWatchUrl(watch.url, cfg).toString(),
         }));
 
         let result = {
@@ -420,6 +472,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         enabled: Type.Optional(Type.Boolean()),
         hasSnapshot: Type.Optional(Type.Boolean()),
         hasSignals: Type.Optional(Type.Boolean()),
+        tag: Type.Optional(Type.String()),
+        group: Type.Optional(Type.String()),
         sortBy: Type.Optional(Type.Union([
           Type.Literal("createdAt"),
           Type.Literal("label"),
@@ -447,6 +501,279 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       },
     },
     { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_watch_bulk_update",
+      label: "Deal Hunter",
+      description: "Bulk-update watches selected by ids or search filters. Defaults to dry-run for safety.",
+      parameters: Type.Object({
+        watchIds: WATCH_SELECTOR_SCHEMA.watchIds,
+        query: WATCH_SELECTOR_SCHEMA.query,
+        matchEnabled: Type.Optional(Type.Boolean()),
+        matchHasSnapshot: Type.Optional(Type.Boolean()),
+        matchHasSignals: Type.Optional(Type.Boolean()),
+        matchTag: Type.Optional(Type.String()),
+        matchGroup: Type.Optional(Type.String()),
+        limit: WATCH_SELECTOR_SCHEMA.limit,
+        dryRun: Type.Optional(Type.Boolean()),
+        group: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        tags: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
+        addTags: Type.Optional(Type.Array(Type.String())),
+        removeTags: Type.Optional(Type.Array(Type.String())),
+        maxPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+        percentDrop: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 100 }), Type.Null()])),
+        keywords: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
+        checkIntervalHint: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        enabled: Type.Optional(Type.Boolean()),
+        clearLastSnapshot: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params) => {
+        const dryRun = params.dryRun !== false;
+        const selectorsUsed = [
+          params.watchIds?.length,
+          params.query,
+          params.matchEnabled != null,
+          params.matchHasSnapshot != null,
+          params.matchHasSignals != null,
+          params.matchTag,
+          params.matchGroup,
+        ].some(Boolean);
+        if (!selectorsUsed) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "no watch selector provided" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+
+        let result = { updatedIds: [] as string[], missingIds: [] as string[] };
+        let watches: ReturnType<typeof toWatchView>[] = [];
+
+        await withStore(async (store) => {
+          const selected = selectWatches(store, {
+            watchIds: params.watchIds,
+            query: params.query,
+            enabled: params.matchEnabled,
+            hasSnapshot: params.matchHasSnapshot,
+            hasSignals: params.matchHasSignals,
+            tag: params.matchTag,
+            group: params.matchGroup,
+            limit: params.limit,
+          });
+          result.missingIds = params.watchIds?.filter((id: string) => !selected.some((watch) => watch.id === id)) ?? [];
+          const target = dryRun ? structuredClone(store) : store;
+          const updateResult = bulkUpdateWatches(
+            target,
+            selected.map((watch) => watch.id),
+            {
+              group: params.group,
+              tags: params.tags,
+              addTags: params.addTags,
+              removeTags: params.removeTags,
+              maxPrice: params.maxPrice,
+              percentDrop: params.percentDrop,
+              keywords: params.keywords,
+              checkIntervalHint: params.checkIntervalHint,
+              enabled: params.enabled,
+              clearLastSnapshot: params.clearLastSnapshot,
+            },
+          );
+          result.updatedIds = updateResult.updatedIds;
+          result.missingIds = [...new Set([...result.missingIds, ...updateResult.missingIds])];
+          watches = updateResult.updatedIds
+            .map((id: string) => getWatch(target, id))
+            .filter((watch): watch is NonNullable<typeof watch> => Boolean(watch))
+            .map(toWatchView);
+          if (!dryRun && updateResult.updatedIds.length > 0) {
+            await saveStore(storePath, target);
+          }
+        });
+
+        return jsonResult({
+          ok: true,
+          dryRun,
+          updatedCount: result.updatedIds.length,
+          missingCount: result.missingIds.length,
+          updatedIds: result.updatedIds,
+          missingIds: result.missingIds,
+          watches,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_watch_tag",
+      label: "Deal Hunter",
+      description: "Add, remove, or replace watch tags and optionally assign a group. Defaults to dry-run for safety.",
+      parameters: Type.Object({
+        watchIds: WATCH_SELECTOR_SCHEMA.watchIds,
+        query: WATCH_SELECTOR_SCHEMA.query,
+        matchEnabled: Type.Optional(Type.Boolean()),
+        matchHasSnapshot: Type.Optional(Type.Boolean()),
+        matchHasSignals: Type.Optional(Type.Boolean()),
+        matchTag: Type.Optional(Type.String()),
+        matchGroup: Type.Optional(Type.String()),
+        limit: WATCH_SELECTOR_SCHEMA.limit,
+        dryRun: Type.Optional(Type.Boolean()),
+        tags: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
+        addTags: Type.Optional(Type.Array(Type.String())),
+        removeTags: Type.Optional(Type.Array(Type.String())),
+        group: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      }),
+      execute: async (_id, params) => {
+        const dryRun = params.dryRun !== false;
+        const selectorsUsed = [
+          params.watchIds?.length,
+          params.query,
+          params.matchEnabled != null,
+          params.matchHasSnapshot != null,
+          params.matchHasSignals != null,
+          params.matchTag,
+          params.matchGroup,
+        ].some(Boolean);
+        if (!selectorsUsed) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "no watch selector provided" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+
+        let result = { updatedIds: [] as string[], missingIds: [] as string[] };
+        let watches: ReturnType<typeof toWatchView>[] = [];
+
+        await withStore(async (store) => {
+          const selected = selectWatches(store, {
+            watchIds: params.watchIds,
+            query: params.query,
+            enabled: params.matchEnabled,
+            hasSnapshot: params.matchHasSnapshot,
+            hasSignals: params.matchHasSignals,
+            tag: params.matchTag,
+            group: params.matchGroup,
+            limit: params.limit,
+          });
+          result.missingIds = params.watchIds?.filter((id: string) => !selected.some((watch) => watch.id === id)) ?? [];
+          const target = dryRun ? structuredClone(store) : store;
+          const updateResult = bulkUpdateWatches(target, selected.map((watch) => watch.id), {
+            group: params.group,
+            tags: params.tags,
+            addTags: params.addTags,
+            removeTags: params.removeTags,
+          });
+          result.updatedIds = updateResult.updatedIds;
+          result.missingIds = [...new Set([...result.missingIds, ...updateResult.missingIds])];
+          watches = updateResult.updatedIds
+            .map((id: string) => getWatch(target, id))
+            .filter((watch): watch is NonNullable<typeof watch> => Boolean(watch))
+            .map(toWatchView);
+          if (!dryRun && updateResult.updatedIds.length > 0) {
+            await saveStore(storePath, target);
+          }
+        });
+
+        return jsonResult({
+          ok: true,
+          dryRun,
+          updatedCount: result.updatedIds.length,
+          missingCount: result.missingIds.length,
+          updatedIds: result.updatedIds,
+          missingIds: result.missingIds,
+          watches,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_watch_dedupe",
+      label: "Deal Hunter",
+      description: "Find or resolve likely duplicate watches using canonicalized URLs. Defaults to report-only dry-run.",
+      parameters: Type.Object({
+        watchIds: Type.Optional(Type.Array(Type.String())),
+        dryRun: Type.Optional(Type.Boolean()),
+        action: Type.Optional(Type.Union([
+          Type.Literal("report"),
+          Type.Literal("disable_duplicates"),
+          Type.Literal("remove_duplicates"),
+        ])),
+        keep: Type.Optional(Type.Union([
+          Type.Literal("oldest"),
+          Type.Literal("newest"),
+        ])),
+      }),
+      execute: async (_id, params) => {
+        const dryRun = params.dryRun !== false;
+        const action = params.action ?? "report";
+        const keep = params.keep ?? "oldest";
+        let groups: Array<{
+          canonicalUrl: string;
+          keep: ReturnType<typeof toWatchView>;
+          duplicates: ReturnType<typeof toWatchView>[];
+        }> = [];
+        let affectedIds: string[] = [];
+
+        await withStore(async (store) => {
+          const selected = selectWatches(store, { watchIds: params.watchIds });
+          const byCanonicalUrl = new Map<string, typeof selected>();
+          for (const watch of selected) {
+            const canonicalUrl = canonicalizeWatchUrl(watch.url).toString();
+            const existing = byCanonicalUrl.get(canonicalUrl) ?? [];
+            existing.push(watch);
+            byCanonicalUrl.set(canonicalUrl, existing);
+          }
+
+          const duplicates = [...byCanonicalUrl.entries()]
+            .map(([canonicalUrl, watches]) => ({ canonicalUrl, watches }))
+            .filter((entry) => entry.watches.length > 1);
+
+          groups = duplicates.map(({ canonicalUrl, watches }) => {
+            const sorted = [...watches].sort((a, b) =>
+              keep === "newest" ? b.createdAt.localeCompare(a.createdAt) : a.createdAt.localeCompare(b.createdAt),
+            );
+            const [winner, ...rest] = sorted;
+            return {
+              canonicalUrl,
+              keep: toWatchView(winner!),
+              duplicates: rest.map(toWatchView),
+            };
+          });
+
+          if (!dryRun && action !== "report") {
+            for (const group of groups) {
+              for (const duplicate of group.duplicates) {
+                if (action === "disable_duplicates") {
+                  const watch = getWatch(store, duplicate.id);
+                  if (watch) watch.enabled = false;
+                } else if (action === "remove_duplicates") {
+                  removeWatch(store, duplicate.id);
+                }
+                affectedIds.push(duplicate.id);
+              }
+            }
+            if (affectedIds.length > 0) {
+              await saveStore(storePath, store);
+            }
+          }
+        });
+
+        return jsonResult({
+          ok: true,
+          dryRun,
+          action,
+          keep,
+          duplicateGroupCount: groups.length,
+          affectedIds,
+          groups,
+        });
+      },
+    },
+    { optional: true },
   );
 
   api.registerTool(
@@ -511,32 +838,12 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         const url = validateTargetUrl(params.url, cfg).toString();
         const { meta, text } = await cappedFetch(url, cfg, { signal });
         const preview = text.slice(0, 8000);
-        const extracted = extractListing(text);
-        const extractedFields = [
-          extracted.title ? "title" : null,
-          extracted.price != null ? "price" : null,
-          extracted.currency ? "currency" : null,
-        ].filter(Boolean);
+        const { extracted, confidence: extractionConfidence, debug } = debugExtractListing(text);
         const fetchSource = cfg.fetcher === "firecrawl" ? "firecrawl" : "node_http";
         const fetchSourceNote =
           cfg.fetcher === "firecrawl"
             ? "Fetched through the Firecrawl scrape API from the Node engine."
             : "Fetched directly over HTTP by the Node engine.";
-        const extractionConfidence = {
-          score: extractedFields.length === 3 ? 90 : extractedFields.length === 2 ? 70 : extractedFields.length === 1 ? 40 : 10,
-          level:
-            extractedFields.length === 3
-              ? "high"
-              : extractedFields.length === 2
-                ? "medium"
-                : extractedFields.length === 1
-                  ? "low"
-                  : "none",
-          reasons:
-            extractedFields.length > 0
-              ? [`Extracted fields: ${extractedFields.join(", ")}.`]
-              : ["No reliable product fields were extracted from the response preview."],
-        };
         const summaryLine = extracted.price != null
           ? `${extracted.title ?? url}: ${extracted.price.toFixed(2)}${extracted.currency ? ` ${extracted.currency}` : ""}`
           : `${extracted.title ?? url}: no price extracted`;
@@ -545,6 +852,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           bodyPreview: preview,
           bodyLength: text.length,
           extracted,
+          extractionDebug: debug,
           fetchSource,
           fetchSourceNote,
           extractionConfidence,
@@ -567,6 +875,32 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       execute: async (_id, params) => {
         const evaluation = evaluateListingText(params.text, { maxPrice: params.maxPrice });
         return jsonResult(evaluation);
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_extraction_debug",
+      label: "Deal Hunter",
+      description: "Fetch one URL and show heuristic extraction candidates, chosen fields, and confidence reasons.",
+      parameters: Type.Object({
+        url: Type.String(),
+      }),
+      execute: async (_id, params, signal) => {
+        const cfg = resolveDealConfig(api);
+        const url = canonicalizeWatchUrl(params.url, cfg).toString();
+        const { meta, text } = await cappedFetch(url, cfg, { signal });
+        const { extracted, confidence, debug } = debugExtractListing(text, 4000);
+        return jsonResult({
+          url,
+          meta,
+          extracted,
+          confidence,
+          debug,
+          bodyPreview: text.slice(0, 4000),
+        });
       },
     },
     { optional: false },
@@ -598,11 +932,18 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_update",
               "deal_watch_set_enabled",
               "deal_watch_search",
+              "deal_watch_bulk_update",
+              "deal_watch_tag",
+              "deal_watch_dedupe",
               "deal_watch_export",
               "deal_watch_import",
               "deal_scan",
               "deal_history",
               "deal_alerts",
+              "deal_trends",
+              "deal_top_drops",
+              "deal_watch_insights",
+              "deal_schedule_advice",
             ],
             firstPrompt:
               "Use deal_watch_list and deal_watch_search to show me my current watches and call out any threshold or keyword signals.",
@@ -618,21 +959,29 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_search",
               "deal_watch_export",
               "deal_fetch_url",
+              "deal_extraction_debug",
               "deal_evaluate_text",
               "deal_help",
               "deal_history",
               "deal_alerts",
+              "deal_trends",
+              "deal_top_drops",
+              "deal_watch_insights",
+              "deal_schedule_advice",
             ],
             writeTools: [
               "deal_watch_add",
               "deal_watch_update",
               "deal_watch_set_enabled",
+              "deal_watch_bulk_update",
+              "deal_watch_tag",
+              "deal_watch_dedupe",
               "deal_watch_remove",
               "deal_watch_import",
               "deal_scan",
             ],
             examplePrompt:
-              "Use deal_watch_search to find disabled watches, then use deal_watch_set_enabled to re-enable the ones I still care about.",
+              "Use deal_top_drops and deal_watch_insights to explain which watch looks like the strongest real deal right now, then use deal_watch_search to find disabled GPU watches I might want to re-enable.",
           },
           cron: {
             example:
@@ -647,7 +996,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           },
           troubleshooting: {
             firstChecks: ["deal_doctor", "deal_health", "deal_fetch_url"],
-            note: "If a scan is blocked, verify the target host against your allowedHosts and blockedHosts policy.",
+            note: "If a scan is blocked, verify the target host against your allowedHosts and blockedHosts policy. Use deal_extraction_debug when parsed fields look suspicious.",
           },
           privacy: {
             storeNote: "Watch metadata and committed scan history are stored in the configured JSON store path.",
@@ -803,6 +1152,78 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       execute: async (_id, params) => {
         const store = await loadStore(storePath);
         return jsonResult(buildAlertsSummary(store, params.severity ?? "low", params.limit ?? 20));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_trends",
+      label: "Deal Hunter",
+      description: "Summarize watch trends, including falling, rising, flat, and volatile watches.",
+      parameters: Type.Object({
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        return jsonResult(buildTrendsSummary(store, params.limit ?? 20));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_top_drops",
+      label: "Deal Hunter",
+      description: "Rank the strongest drops by current discount from peak or the latest committed move.",
+      parameters: Type.Object({
+        metric: Type.Optional(Type.Union([Type.Literal("vs_peak"), Type.Literal("latest_change")])),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        return jsonResult(buildTopDropsSummary(store, params.metric ?? "vs_peak", params.limit ?? 10));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_watch_insights",
+      label: "Deal Hunter",
+      description: "Explain one watch in depth: trend, volatility, glitch risk, current position, and active signals.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "watch not found" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+        return jsonResult(buildWatchInsights(watch));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_schedule_advice",
+      label: "Deal Hunter",
+      description: "Recommend scan cadence by host or watch based on observed history timing.",
+      parameters: Type.Object({
+        mode: Type.Optional(Type.Union([Type.Literal("host"), Type.Literal("watch")])),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        return jsonResult(buildScheduleAdvice(store, params.mode ?? "host"));
       },
     },
     { optional: false },

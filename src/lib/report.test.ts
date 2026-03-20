@@ -7,8 +7,12 @@ import {
   buildHealthSummary,
   buildHistorySummary,
   buildQuickstartGuide,
+  buildScheduleAdvice,
   buildSampleSetup,
   buildStoreReport,
+  buildTopDropsSummary,
+  buildTrendsSummary,
+  buildWatchInsights,
 } from "./report.js";
 
 const store: StoreFile = {
@@ -225,5 +229,62 @@ describe("buildAlertsSummary", () => {
       latestPrice: 15,
       lowestSeenPrice: 15,
     });
+  });
+});
+
+describe("buildTrendsSummary", () => {
+  it("classifies volatile and falling watches with sparkline context", () => {
+    const trends = buildTrendsSummary(store, 10);
+    expect(trends.count).toBeGreaterThan(0);
+    expect(trends.trends.find((item) => item.watchId === "watch-3")).toMatchObject({
+      direction: "volatile",
+      trend: "volatile",
+    });
+    expect(trends.trends.find((item) => item.watchId === "watch-1")).toMatchObject({
+      direction: "down",
+      trend: "falling",
+    });
+  });
+});
+
+describe("buildTopDropsSummary", () => {
+  it("ranks watches by distance from peak and latest change", () => {
+    const peak = buildTopDropsSummary(store, "vs_peak", 5);
+    expect(peak.drops[0]).toMatchObject({
+      watchId: "watch-3",
+      savingsPercentFromPeak: 100,
+    });
+
+    const latest = buildTopDropsSummary(store, "latest_change", 5);
+    expect(latest.drops[0]).toMatchObject({
+      watchId: "watch-3",
+    });
+    expect((latest.drops[0]?.recentPercentDelta ?? 0)).toBeLessThan(0);
+  });
+});
+
+describe("buildWatchInsights", () => {
+  it("explains one watch with volatility and glitch context", () => {
+    const insights = buildWatchInsights(store.watches[2]!);
+    expect(insights).toMatchObject({
+      watchId: "watch-3",
+      historyCount: 4,
+    });
+    expect(insights.trend.direction).toBe("volatile");
+    expect(insights.glitch.score).toBeGreaterThanOrEqual(90);
+    expect(insights.sparkline.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildScheduleAdvice", () => {
+  it("recommends cadence by host and watch", () => {
+    const hostAdvice = buildScheduleAdvice(store, "host");
+    expect(hostAdvice.recommendations[0]).toMatchObject({
+      target: "shop.test",
+    });
+    expect(hostAdvice.recommendations[0]?.recommendedMinutes).toBeGreaterThanOrEqual(30);
+
+    const watchAdvice = buildScheduleAdvice(store, "watch");
+    expect(watchAdvice.recommendations.some((item) => item.target === "watch-1")).toBe(true);
   });
 });

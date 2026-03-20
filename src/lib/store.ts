@@ -5,6 +5,17 @@ import type { ScanResultItem, StoreFile, Watch, WatchHistoryEntry } from "../typ
 
 const MAX_HISTORY_ENTRIES = 60;
 
+function normalizeTags(tags: string[] | undefined): string[] | undefined {
+  if (!tags?.length) return undefined;
+  const normalized = [...new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))];
+  return normalized.length ? normalized : undefined;
+}
+
+function normalizeGroup(group: string | undefined): string | undefined {
+  const normalized = group?.trim();
+  return normalized ? normalized : undefined;
+}
+
 export async function loadStore(path: string): Promise<StoreFile> {
   try {
     const raw = await readFile(path, "utf8");
@@ -32,6 +43,8 @@ export function addWatch(store: StoreFile, partial: Omit<Watch, "id" | "createdA
     id: randomUUID(),
     url: partial.url,
     label: partial.label,
+    group: normalizeGroup(partial.group),
+    tags: normalizeTags(partial.tags),
     maxPrice: partial.maxPrice,
     percentDrop: partial.percentDrop,
     keywords: partial.keywords,
@@ -48,6 +61,8 @@ export type ImportedWatchInput = {
   id?: string;
   url: string;
   label?: string;
+  group?: string;
+  tags?: string[];
   maxPrice?: number;
   percentDrop?: number;
   keywords?: string[];
@@ -76,6 +91,8 @@ function materializeImportedWatch(input: ImportedWatchInput, options?: { preserv
     id: options?.preserveId && input.id ? input.id : randomUUID(),
     url: input.url,
     label: input.label,
+    group: normalizeGroup(input.group),
+    tags: normalizeTags(input.tags),
     maxPrice: input.maxPrice,
     percentDrop: input.percentDrop,
     keywords: input.keywords ? [...input.keywords] : undefined,
@@ -143,6 +160,8 @@ export function appendWatchHistory(watch: Watch, result: ScanResultItem): boolea
 export type WatchUpdatePatch = {
   url?: string;
   label?: string | null;
+  group?: string | null;
+  tags?: string[] | null;
   maxPrice?: number | null;
   percentDrop?: number | null;
   keywords?: string[] | null;
@@ -157,6 +176,8 @@ export function updateWatch(store: StoreFile, id: string, patch: WatchUpdatePatc
 
   if ("url" in patch && patch.url != null) watch.url = patch.url;
   if ("label" in patch) watch.label = patch.label ?? undefined;
+  if ("group" in patch) watch.group = normalizeGroup(patch.group ?? undefined);
+  if ("tags" in patch) watch.tags = normalizeTags(patch.tags ?? undefined);
   if ("maxPrice" in patch) watch.maxPrice = patch.maxPrice ?? undefined;
   if ("percentDrop" in patch) watch.percentDrop = patch.percentDrop ?? undefined;
   if ("keywords" in patch) watch.keywords = patch.keywords ?? undefined;
@@ -165,6 +186,59 @@ export function updateWatch(store: StoreFile, id: string, patch: WatchUpdatePatc
   if (patch.clearLastSnapshot) watch.lastSnapshot = undefined;
 
   return watch;
+}
+
+export type WatchBulkPatch = {
+  group?: string | null;
+  tags?: string[] | null;
+  addTags?: string[];
+  removeTags?: string[];
+  maxPrice?: number | null;
+  percentDrop?: number | null;
+  keywords?: string[] | null;
+  checkIntervalHint?: string | null;
+  enabled?: boolean;
+  clearLastSnapshot?: boolean;
+};
+
+export function bulkUpdateWatches(store: StoreFile, ids: string[], patch: WatchBulkPatch): {
+  updatedIds: string[];
+  missingIds: string[];
+} {
+  const updatedIds: string[] = [];
+  const missingIds: string[] = [];
+  const normalizedAddTags = normalizeTags(patch.addTags);
+  const normalizedRemoveTags = new Set(normalizeTags(patch.removeTags) ?? []);
+
+  for (const id of ids) {
+    const watch = getWatch(store, id);
+    if (!watch) {
+      missingIds.push(id);
+      continue;
+    }
+
+    updateWatch(store, id, {
+      group: patch.group,
+      tags: patch.tags,
+      maxPrice: patch.maxPrice,
+      percentDrop: patch.percentDrop,
+      keywords: patch.keywords,
+      checkIntervalHint: patch.checkIntervalHint,
+      enabled: patch.enabled,
+      clearLastSnapshot: patch.clearLastSnapshot,
+    });
+
+    if (patch.addTags || patch.removeTags) {
+      const nextTags = new Set(normalizeTags(watch.tags) ?? []);
+      for (const tag of normalizedAddTags ?? []) nextTags.add(tag);
+      for (const tag of normalizedRemoveTags) nextTags.delete(tag);
+      watch.tags = nextTags.size ? [...nextTags].sort() : undefined;
+    }
+
+    updatedIds.push(id);
+  }
+
+  return { updatedIds, missingIds };
 }
 
 export function setWatchEnabled(store: StoreFile, ids: string[], enabled: boolean): {
