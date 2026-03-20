@@ -780,6 +780,7 @@ export function buildSampleSetup() {
       "deal_watch_update",
       "deal_watch_set_enabled",
       "deal_watch_search",
+      "deal_watch_taxonomy",
       "deal_saved_view_list",
       "deal_saved_view_create",
       "deal_saved_view_update",
@@ -827,6 +828,7 @@ export function buildSampleSetup() {
       "Use deal_template_list and recommend the best starter template for my first watch.",
       "Use deal_watch_add_template in dry-run mode to prepare a restock_signal watch for https://example.com/product.",
       "Use deal_watch_add to add a watch for https://example.com/product and then use deal_scan with commit true.",
+      "Use deal_watch_taxonomy and suggest the best saved views I should create from my current groups and tags.",
       "Use deal_watch_search to show me disabled watches and any watches currently showing threshold or keyword signals.",
       "Use deal_saved_view_create to save a view for my GPU watches with active signals, then run it.",
       "Use deal_saved_view_update to rename my GPU view and tighten the selector to only enabled watches with snapshots.",
@@ -863,6 +865,7 @@ export function buildQuickstartGuide() {
       "Set allowedHosts for the retailer domains you trust most.",
       "Use deal_template_list if you want a faster template-driven first watch instead of building fields manually.",
       "Use deal_watch_add to create the first watch.",
+      "Use deal_watch_taxonomy once the watchlist grows so you can see which groups, tags, and saved views deserve cleanup.",
       "Use deal_saved_view_create for repeat searches once your watchlist grows beyond a few items.",
       "Use deal_saved_view_update to keep saved views aligned with how you actually manage the watchlist.",
       "Use deal_watch_tag or deal_watch_bulk_update once you have enough watches to organize by tag or group.",
@@ -878,6 +881,7 @@ export function buildQuickstartGuide() {
       "Use deal_sample_setup and show me the safest minimal config for this plugin.",
       "Use deal_template_list and recommend the right template for a price-target watch.",
       "Use deal_watch_add_template in dry-run mode to show me the exact watch config before saving it.",
+      "Use deal_watch_taxonomy and tell me which saved views I should create for my current groups and tags.",
       "Use deal_watch_add to add my first watch, then run deal_scan with commit true.",
       "Use deal_report and deal_alerts to summarize the most interesting current deals.",
       "Use deal_view_report for my saved GPU alerts view so I get a compact multi-signal report in one call.",
@@ -1551,6 +1555,56 @@ function buildTagBreakdown(watches: Watch[], limit: number) {
     .slice(0, limit);
 }
 
+function buildDetailedGroupBreakdown(
+  watches: Watch[],
+  limit: number,
+): Array<{ group: string; count: number; activeSignals: number; watchIds: string[] }> {
+  const counts = new Map<string, { count: number; activeSignals: number; watchIds: string[] }>();
+  for (const watch of watches) {
+    const key = watch.group?.trim() || "(ungrouped)";
+    const entry = counts.get(key) ?? { count: 0, activeSignals: 0, watchIds: [] };
+    entry.count += 1;
+    entry.activeSignals += buildWatchSignals(watch).length > 0 ? 1 : 0;
+    entry.watchIds.push(watch.id);
+    counts.set(key, entry);
+  }
+  return [...counts.entries()]
+    .map(([group, value]) => ({
+      group,
+      count: value.count,
+      activeSignals: value.activeSignals,
+      watchIds: value.watchIds.sort(),
+    }))
+    .sort((a, b) => b.count - a.count || b.activeSignals - a.activeSignals || a.group.localeCompare(b.group))
+    .slice(0, limit);
+}
+
+function buildDetailedTagBreakdown(
+  watches: Watch[],
+  limit: number,
+): Array<{ tag: string; count: number; activeSignals: number; watchIds: string[] }> {
+  const counts = new Map<string, { count: number; activeSignals: number; watchIds: string[] }>();
+  for (const watch of watches) {
+    const tags = watch.tags ?? [];
+    for (const tag of tags) {
+      const entry = counts.get(tag) ?? { count: 0, activeSignals: 0, watchIds: [] };
+      entry.count += 1;
+      entry.activeSignals += buildWatchSignals(watch).length > 0 ? 1 : 0;
+      entry.watchIds.push(watch.id);
+      counts.set(tag, entry);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, value]) => ({
+      tag,
+      count: value.count,
+      activeSignals: value.activeSignals,
+      watchIds: value.watchIds.sort(),
+    }))
+    .sort((a, b) => b.count - a.count || b.activeSignals - a.activeSignals || a.tag.localeCompare(b.tag))
+    .slice(0, limit);
+}
+
 function buildSubsetStore(store: StoreFile, watches: Watch[]): StoreFile {
   return {
     version: store.version,
@@ -1926,6 +1980,122 @@ export function buildWorkflowPortfolio(
     tagBreakdown,
     actionSummary,
   };
+}
+
+export function buildTaxonomySummary(
+  store: StoreFile,
+  limit = 10,
+): {
+  watchCount: number;
+  groupedCount: number;
+  ungroupedCount: number;
+  taggedCount: number;
+  untaggedCount: number;
+  groupBreakdown: Array<{ group: string; count: number; activeSignals: number; watchIds: string[] }>;
+  tagBreakdown: Array<{ tag: string; count: number; activeSignals: number; watchIds: string[] }>;
+  suggestedSavedViews: Array<{
+    name: string;
+    description: string;
+    selector: {
+      group?: string;
+      tag?: string;
+      hasSignals?: boolean;
+      enabled?: boolean;
+    };
+    reason: string;
+  }>;
+  actionSummary: string[];
+} {
+  const groupedCount = store.watches.filter((watch) => Boolean(watch.group?.trim())).length;
+  const taggedCount = store.watches.filter((watch) => Boolean(watch.tags?.length)).length;
+  const groupBreakdown = buildDetailedGroupBreakdown(store.watches, limit);
+  const tagBreakdown = buildDetailedTagBreakdown(store.watches, limit);
+  const existingViewNames = new Set(store.savedViews.map((view) => view.name.toLowerCase()));
+  const existingSelectorKeys = new Set(
+    store.savedViews.map((view) => JSON.stringify(view.selector ?? {})),
+  );
+  const suggestedSavedViews: Array<{
+    name: string;
+    description: string;
+    selector: {
+      group?: string;
+      tag?: string;
+      hasSignals?: boolean;
+      enabled?: boolean;
+    };
+    reason: string;
+  }> = [];
+
+  for (const group of groupBreakdown) {
+    if (group.group === "(ungrouped)" || group.count < 2) continue;
+    suggestedSavedViews.push({
+      name: `${group.group} watchlist`,
+      description: `Watches grouped under ${group.group}.`,
+      selector: { group: group.group },
+      reason: `${group.count} watches already share the ${group.group} group.`,
+    });
+    if (group.activeSignals > 0) {
+      suggestedSavedViews.push({
+        name: `${group.group} active signals`,
+        description: `Signal-heavy watches in the ${group.group} group.`,
+        selector: { group: group.group, hasSignals: true, enabled: true },
+        reason: `${group.activeSignals} watches in ${group.group} currently have active signals.`,
+      });
+    }
+  }
+
+  for (const tag of tagBreakdown) {
+    if (tag.count < 2) continue;
+    suggestedSavedViews.push({
+      name: `${tag.tag} tag view`,
+      description: `Watches carrying the ${tag.tag} tag.`,
+      selector: { tag: tag.tag },
+      reason: `${tag.count} watches already share the ${tag.tag} tag.`,
+    });
+  }
+
+  const dedupedSuggestedViews = suggestedSavedViews
+    .filter((view, index, views) => {
+      if (existingViewNames.has(view.name.toLowerCase())) return false;
+      if (existingSelectorKeys.has(JSON.stringify(view.selector))) return false;
+      return views.findIndex((candidate) => candidate.name === view.name) === index;
+    })
+    .slice(0, limit);
+
+  const actionSummary: string[] = [];
+  if (ungroupedCount(store.watches) > 0) {
+    actionSummary.push(
+      `${ungroupedCount(store.watches)} watch${ungroupedCount(store.watches) === 1 ? "" : "es"} are still ungrouped and may benefit from deal_watch_tag or deal_view_bulk_update.`,
+    );
+  }
+  if (store.watches.length - taggedCount > 0) {
+    const untaggedCount = store.watches.length - taggedCount;
+    actionSummary.push(
+      `${untaggedCount} watch${untaggedCount === 1 ? "" : "es"} still have no tags, which limits saved-view reuse.`,
+    );
+  }
+  if (groupBreakdown[0] && groupBreakdown[0].group !== "(ungrouped)") {
+    actionSummary.push(`Largest current group: ${groupBreakdown[0].group} (${groupBreakdown[0].count} watches).`);
+  }
+  if (tagBreakdown[0]) {
+    actionSummary.push(`Most common tag: ${tagBreakdown[0].tag} (${tagBreakdown[0].count} watches).`);
+  }
+
+  return {
+    watchCount: store.watches.length,
+    groupedCount,
+    ungroupedCount: store.watches.length - groupedCount,
+    taggedCount,
+    untaggedCount: store.watches.length - taggedCount,
+    groupBreakdown,
+    tagBreakdown,
+    suggestedSavedViews: dedupedSuggestedViews,
+    actionSummary,
+  };
+}
+
+function ungroupedCount(watches: Watch[]): number {
+  return watches.filter((watch) => !watch.group?.trim()).length;
 }
 
 export function buildWorkflowTriage(

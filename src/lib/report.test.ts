@@ -14,6 +14,7 @@ import {
   buildScheduleAdvice,
   buildSampleSetup,
   buildStoreReport,
+  buildTaxonomySummary,
   buildTopDropsSummary,
   buildTrendsSummary,
   buildViewReport,
@@ -33,6 +34,8 @@ const store: StoreFile = {
       id: "watch-1",
       url: "http://shop.test/a",
       label: "Book",
+      group: "books",
+      tags: ["books", "collectibles"],
       enabled: true,
       maxPrice: 20,
       keywords: ["rare"],
@@ -76,6 +79,8 @@ const store: StoreFile = {
       id: "watch-3",
       url: "http://shop.test/c",
       label: "GPU",
+      group: "pc-build",
+      tags: ["gpu", "pc"],
       enabled: true,
       maxPrice: 100,
       createdAt: "2026-03-20T01:00:00.000Z",
@@ -193,6 +198,7 @@ describe("buildSampleSetup", () => {
     const sample = buildSampleSetup();
     expect(sample.installCommand).toContain("openclaw plugins install");
     expect(sample.allowlist).toContain("deal_watch_add");
+    expect(sample.allowlist).toContain("deal_watch_taxonomy");
     expect(sample.allowlist).toContain("deal_history");
     expect(sample.allowlist).toContain("deal_watch_import");
     expect(sample.allowlist).toContain("deal_watch_import_url");
@@ -207,10 +213,60 @@ describe("buildQuickstartGuide", () => {
     const guide = buildQuickstartGuide();
     expect(guide.installCommand).toContain("openclaw plugins install");
     expect(guide.firstRunChecklist.length).toBeGreaterThan(3);
+    expect(guide.firstRunChecklist.some((item) => item.includes("deal_watch_taxonomy"))).toBe(true);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_watch_import_url"))).toBe(true);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_saved_view_create"))).toBe(true);
     expect(guide.privacyAndSafety.some((item) => item.includes("allowedHosts"))).toBe(true);
     expect(guide.troubleshooting.some((item) => item.includes("deal_doctor"))).toBe(true);
+  });
+});
+
+describe("buildTaxonomySummary", () => {
+  it("summarizes groups, tags, and suggested saved views", () => {
+    const taxonomy = buildTaxonomySummary(store);
+    expect(taxonomy).toMatchObject({
+      watchCount: 3,
+      groupedCount: 2,
+      ungroupedCount: 1,
+      taggedCount: 2,
+      untaggedCount: 1,
+    });
+    expect(taxonomy.groupBreakdown[0]).toMatchObject({
+      group: "books",
+      count: 1,
+      activeSignals: 1,
+    });
+    expect(taxonomy.tagBreakdown.some((entry) => entry.tag === "books")).toBe(true);
+    expect(taxonomy.suggestedSavedViews.some((view) => view.selector.group === "books")).toBe(false);
+  });
+
+  it("suggests saved views for repeated groups and tags", () => {
+    const richerStore: StoreFile = {
+      ...store,
+      watches: [
+        ...store.watches,
+        {
+          id: "watch-4",
+          url: "http://shop.test/d",
+          label: "GPU 2",
+          group: "pc-build",
+          tags: ["gpu"],
+          enabled: true,
+          createdAt: "2026-03-20T02:00:00.000Z",
+          lastSnapshot: {
+            title: "GPU 2",
+            canonicalTitle: "gpu 2",
+            price: 95,
+            currency: "USD",
+            fetchedAt: "2026-03-21T00:00:00.000Z",
+          },
+        },
+      ],
+    };
+    const taxonomy = buildTaxonomySummary(richerStore);
+    expect(taxonomy.suggestedSavedViews.some((view) => view.selector.group === "pc-build")).toBe(true);
+    expect(taxonomy.suggestedSavedViews.some((view) => view.selector.tag === "gpu")).toBe(true);
+    expect(taxonomy.actionSummary.some((item) => item.includes("Largest current group"))).toBe(true);
   });
 });
 
