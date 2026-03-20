@@ -6,6 +6,7 @@ import {
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
+  buildQuickstartGuide,
   buildSampleSetup,
   buildStoreReport,
 } from "./report.js";
@@ -179,6 +180,16 @@ describe("buildSampleSetup", () => {
     expect(sample.allowlist).toContain("deal_history");
     expect(sample.allowlist).toContain("deal_watch_import");
     expect(sample.examplePrompts.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildQuickstartGuide", () => {
+  it("returns first-run guidance and safety reminders", () => {
+    const guide = buildQuickstartGuide();
+    expect(guide.installCommand).toContain("openclaw plugins install");
+    expect(guide.firstRunChecklist.length).toBeGreaterThan(3);
+    expect(guide.privacyAndSafety.some((item) => item.includes("allowedHosts"))).toBe(true);
+    expect(guide.troubleshooting.some((item) => item.includes("deal_doctor"))).toBe(true);
   });
 });
 

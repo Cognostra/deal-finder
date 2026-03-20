@@ -10,6 +10,7 @@ import {
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
+  buildQuickstartGuide,
   buildSampleSetup,
   buildStoreReport,
 } from "./lib/report.js";
@@ -575,7 +576,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
     {
       name: "deal_help",
       label: "Deal Hunter",
-      description: "Show install, tool, cron, and safety guidance for Deal Hunter.",
+      description: "Show install, tool, cron, import/export, troubleshooting, and safety guidance for Deal Hunter.",
       parameters: Type.Object({
         topic: Type.Optional(Type.Union([
           Type.Literal("overview"),
@@ -583,6 +584,9 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           Type.Literal("tools"),
           Type.Literal("cron"),
           Type.Literal("safety"),
+          Type.Literal("import_export"),
+          Type.Literal("troubleshooting"),
+          Type.Literal("privacy"),
         ])),
       }),
       execute: async (_id, params) => {
@@ -634,6 +638,22 @@ export function registerDealTools(api: OpenClawPluginApi): void {
             example:
               "openclaw cron add --name \"Deal scan\" --cron \"0 * * * *\" --session isolated --message \"Run deal_scan with commit true for all enabled watches. Summarize any alerts.\" --announce",
           },
+          import_export: {
+            exportPrompt:
+              "Use deal_watch_export with includeHistory true so I can back up my active watches before I reorganize them.",
+            importPrompt:
+              "Prepare a deal_watch_import dry run in upsert mode so I can preview which watches would be added or updated.",
+            modes: ["append", "upsert", "replace"],
+          },
+          troubleshooting: {
+            firstChecks: ["deal_doctor", "deal_health", "deal_fetch_url"],
+            note: "If a scan is blocked, verify the target host against your allowedHosts and blockedHosts policy.",
+          },
+          privacy: {
+            storeNote: "Watch metadata and committed scan history are stored in the configured JSON store path.",
+            backupNote: "Use deal_watch_export when you want a reviewable backup before major edits or migration.",
+            networkNote: "Only http/https targets that pass the host safety policy are fetched.",
+          },
           safety: {
             guardrails: [
               "Only http/https targets are allowed.",
@@ -648,6 +668,19 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           topic,
           details: topics[topic],
         });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_quickstart",
+      label: "Deal Hunter",
+      description: "Show a first-run checklist, recommended prompts, and privacy/safety reminders for new users.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        return jsonResult(buildQuickstartGuide());
       },
     },
     { optional: false },

@@ -444,6 +444,7 @@ export function buildSampleSetup() {
       "deal_fetch_url",
       "deal_evaluate_text",
       "deal_help",
+      "deal_quickstart",
       "deal_report",
       "deal_health",
       "deal_history",
@@ -453,6 +454,7 @@ export function buildSampleSetup() {
     ],
     examplePrompts: [
       "Use deal_help and tell me the best first-run workflow for this plugin.",
+      "Use deal_quickstart and give me the safest first-run checklist for this plugin.",
       "Use deal_watch_add to add a watch for https://example.com/product and then use deal_scan with commit true.",
       "Use deal_watch_search to show me disabled watches and any watches currently showing threshold or keyword signals.",
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
@@ -460,6 +462,37 @@ export function buildSampleSetup() {
     ],
     cronExample:
       "openclaw cron add --name \"Deal scan\" --cron \"0 * * * *\" --session isolated --message \"Run deal_scan with commit true for all enabled watches. Summarize any alerts.\" --announce",
+  };
+}
+
+export function buildQuickstartGuide() {
+  return {
+    installCommand: "openclaw plugins install openclaw-deal-hunter",
+    firstRunChecklist: [
+      "Enable the plugin and allow the tools you want your agent to use.",
+      "Set allowedHosts for the retailer domains you trust most.",
+      "Use deal_watch_add to create the first watch.",
+      "Run deal_scan with commit true to capture the first snapshot.",
+      "Use deal_alerts and deal_report to inspect what changed.",
+      "Use deal_watch_export before large watchlist edits or migration.",
+    ],
+    recommendedPrompts: [
+      "Use deal_sample_setup and show me the safest minimal config for this plugin.",
+      "Use deal_watch_add to add my first watch, then run deal_scan with commit true.",
+      "Use deal_report and deal_alerts to summarize the most interesting current deals.",
+    ],
+    privacyAndSafety: [
+      "The plugin stores watch metadata and scan history in the configured JSON store path.",
+      "It only fetches http/https URLs that pass the built-in host safety policy.",
+      "Use allowedHosts to narrow scanning to trusted retailer domains.",
+      "Use deal_watch_export if you want a reviewable backup before making major changes.",
+    ],
+    troubleshooting: [
+      "Use deal_doctor for a quick sanity check of config and watch coverage.",
+      "Use deal_health to confirm the active fetch limits and host-policy posture.",
+      "If scans return policy errors, verify the target host against allowedHosts and blockedHosts.",
+      "If extraction looks weak, use deal_fetch_url to inspect the raw preview and parsed fields.",
+    ],
   };
 }
 

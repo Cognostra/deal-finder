@@ -64,6 +64,9 @@
   },
   "homepage": "https://github.com/Cognostra/deal-finder#readme",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "openclaw",
     "plugin",

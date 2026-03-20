@@ -86,6 +86,7 @@ agents: {
           "deal_fetch_url",
           "deal_evaluate_text",
           "deal_help",
+          "deal_quickstart",
           "deal_report",
           "deal_health",
           "deal_history",
@@ -115,6 +116,7 @@ agents: {
 | `deal_fetch_url` | One-off capped fetch + heuristic extraction. |
 | `deal_evaluate_text` | Score pasted text for “freebie / glitchy” wording (no network). |
 | `deal_help` | Show install, tool, cron, and safety guidance from inside OpenClaw. |
+| `deal_quickstart` | Show a first-run checklist, starter prompts, and privacy/safety reminders. |
 | `deal_report` | Summarize the watchlist, price leaders, recent changes, noisy watches, and glitch candidates. |
 | `deal_health` | Show configuration, storage, safety posture, and operational recommendations. |
 | `deal_history` | Show per-watch price history, recent deltas, and lowest/highest seen prices. |
@@ -126,16 +128,17 @@ Side-effecting tools are registered as **optional** (except `deal_watch_list` / 
 
 Recommended first-run workflow:
 
-1. `deal_help` for install/tool guidance and sample prompts.
-2. `deal_sample_setup` for ready-to-copy install/config/cron examples.
-3. `deal_watch_add` to create the first watch.
-4. `deal_watch_search` to inspect watches and current threshold/keyword signals.
-5. `deal_scan` with `commit: true` to capture snapshots.
-6. `deal_history` and `deal_alerts` to inspect recent movement and ranked active signals.
-7. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-8. `deal_watch_import` with `dryRun: true` before applying shared or migrated watchlists.
-9. `deal_watch_update` or `deal_watch_set_enabled` as the watchlist grows.
-10. `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+1. `deal_quickstart` for the shortest safe first-run checklist.
+2. `deal_help` for install/tool guidance and sample prompts.
+3. `deal_sample_setup` for ready-to-copy install/config/cron examples.
+4. `deal_watch_add` to create the first watch.
+5. `deal_watch_search` to inspect watches and current threshold/keyword signals.
+6. `deal_scan` with `commit: true` to capture snapshots.
+7. `deal_history` and `deal_alerts` to inspect recent movement and ranked active signals.
+8. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+9. `deal_watch_import` with `dryRun: true` before applying shared or migrated watchlists.
+10. `deal_watch_update` or `deal_watch_set_enabled` as the watchlist grows.
+11. `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -177,6 +180,21 @@ Network guardrails:
 - Hostnames that resolve to private or loopback IPs are blocked at fetch time.
 - `allowedHosts` and `blockedHosts` can further restrict where the plugin is allowed to connect.
 - Redirect targets are validated before the plugin follows them.
+
+## Privacy & data
+
+- Watch metadata, the latest snapshot, and committed history are stored in the configured JSON store path.
+- Exported watchlists may include URLs, thresholds, snapshots, and history if you choose to include them.
+- `deal_watch_import` supports `dryRun` so you can preview changes before writing them to disk.
+- `allowedHosts` is the best way to keep the plugin constrained to the domains you actually want it to touch.
+
+## Troubleshooting
+
+- Use `deal_quickstart` if you want the shortest safe first-run path.
+- Use `deal_doctor` for a quick sanity check.
+- Use `deal_health` to inspect active limits, fetcher choice, and host-policy posture.
+- Use `deal_fetch_url` when extraction quality looks weak and you need to inspect the raw preview.
+- If a URL is blocked, compare it against your `allowedHosts` and `blockedHosts` settings first.
 
 ## Proactive scans (cron)
 
