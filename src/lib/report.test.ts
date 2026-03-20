@@ -13,6 +13,11 @@ import {
   buildStoreReport,
   buildTopDropsSummary,
   buildTrendsSummary,
+  buildViewReport,
+  buildWorkflowBestOpportunities,
+  buildWorkflowCleanup,
+  buildWorkflowPortfolio,
+  buildWorkflowTriage,
   buildWatchIdentitySummary,
   buildWatchInsights,
 } from "./report.js";
@@ -420,5 +425,75 @@ describe("buildScheduleAdvice", () => {
 
     const watchAdvice = buildScheduleAdvice(store, "watch");
     expect(watchAdvice.recommendations.some((item) => item.target === "watch-1")).toBe(true);
+  });
+});
+
+describe("buildViewReport", () => {
+  it("composes a compact multi-signal report for a scoped watch subset", () => {
+    const scoped = buildViewReport(store, [store.watches[0]!, store.watches[2]!], {
+      limit: 5,
+      severity: "medium",
+      metric: "vs_peak",
+    });
+
+    expect(scoped.scopedCount).toBe(2);
+    expect(scoped.alerts.count).toBe(2);
+    expect(scoped.topDrops.drops[0]?.watchId).toBe("watch-3");
+    expect(scoped.bestOpportunities.topRealDeals[0]?.watchId).toBe("watch-1");
+  });
+});
+
+describe("buildWorkflowBestOpportunities", () => {
+  it("separates likely-real deals from suspicious glitch candidates", () => {
+    const summary = buildWorkflowBestOpportunities(store, 5);
+
+    expect(summary.watchCount).toBe(3);
+    expect(summary.topRealDeals[0]).toMatchObject({
+      watchId: "watch-1",
+      severity: "high",
+    });
+    expect(summary.suspiciousDeals[0]).toMatchObject({
+      watchId: "watch-3",
+      glitchScore: 95,
+    });
+    expect(summary.strongestAlerts.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildWorkflowCleanup", () => {
+  it("surfaces no-snapshot, weak-extraction, and noisy cleanup candidates", () => {
+    const cleanup = buildWorkflowCleanup(store, 10);
+
+    expect(cleanup.noSnapshot).toContainEqual({
+      watchId: "watch-2",
+      label: "Desk",
+      url: "http://shop.test/b",
+      enabled: false,
+    });
+    expect(cleanup.weakExtraction.some((item) => item.watchId === "watch-2")).toBe(true);
+    expect(cleanup.noisyWatches[0]?.watchId).toBe("watch-3");
+  });
+});
+
+describe("buildWorkflowPortfolio", () => {
+  it("builds an executive portfolio dashboard from the current store", () => {
+    const portfolio = buildWorkflowPortfolio(store, 5);
+
+    expect(portfolio.watchCount).toBe(3);
+    expect(portfolio.overview.total).toBe(3);
+    expect(portfolio.strongestAlerts.alerts[0]?.watchId).toBe("watch-3");
+    expect(portfolio.topDrops.drops.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildWorkflowTriage", () => {
+  it("answers what changed, what matters, and what looks noisy", () => {
+    const triage = buildWorkflowTriage(store, 5, "medium");
+
+    expect(triage.changed[0]?.watchId).toBe("watch-3");
+    expect(triage.bestOpportunity).toMatchObject({
+      watchId: "watch-1",
+    });
+    expect(triage.probableNoise[0]?.watchId).toBe("watch-3");
   });
 });

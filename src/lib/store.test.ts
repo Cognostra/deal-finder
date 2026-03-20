@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { addSavedView, addWatch, appendWatchHistory, bulkUpdateWatches, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
+import { addSavedView, addWatch, appendWatchHistory, bulkUpdateWatches, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./store.js";
 
 let tempDirs: string[] = [];
 
@@ -451,5 +451,27 @@ describe("store", () => {
 
     expect(removeSavedView(store, saved.id)).toBe(true);
     expect(listSavedViews(store)).toEqual([]);
+  });
+
+  it("updates saved view metadata and selector fields", () => {
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
+    const saved = addSavedView(store, {
+      name: "GPU alerts",
+      description: "Old description",
+      selector: { tag: "gpu", hasSignals: true },
+    });
+
+    const updated = updateSavedView(store, saved.id, {
+      name: "GPU triage",
+      description: null,
+      selector: { tag: "gpu", enabled: true, hasSnapshot: true, limit: 10 },
+    });
+
+    expect(updated).toMatchObject({
+      id: saved.id,
+      name: "GPU triage",
+      description: undefined,
+      selector: { tag: "gpu", enabled: true, hasSnapshot: true, limit: 10 },
+    });
   });
 });

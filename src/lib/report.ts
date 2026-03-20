@@ -1,5 +1,6 @@
 import type { ResolvedDealConfig } from "../config.js";
 import type { AlertSeverity, StoreFile, Watch, WatchHistoryEntry } from "../types.js";
+import { canonicalizeWatchUrl } from "./url-policy.js";
 import { buildWatchSignals } from "./watch-view.js";
 
 function getHistoryEntries(watch: Watch): WatchHistoryEntry[] {
@@ -608,9 +609,13 @@ export function buildSampleSetup() {
       "deal_watch_search",
       "deal_saved_view_list",
       "deal_saved_view_create",
+      "deal_saved_view_update",
       "deal_saved_view_run",
       "deal_saved_view_delete",
+      "deal_view_scan",
+      "deal_view_report",
       "deal_watch_bulk_update",
+      "deal_view_bulk_update",
       "deal_watch_tag",
       "deal_watch_dedupe",
       "deal_watch_export",
@@ -624,6 +629,10 @@ export function buildSampleSetup() {
       "deal_help",
       "deal_quickstart",
       "deal_report",
+      "deal_workflow_portfolio",
+      "deal_workflow_triage",
+      "deal_workflow_cleanup",
+      "deal_workflow_best_opportunities",
       "deal_health",
       "deal_history",
       "deal_alerts",
@@ -642,13 +651,21 @@ export function buildSampleSetup() {
       "Use deal_watch_add to add a watch for https://example.com/product and then use deal_scan with commit true.",
       "Use deal_watch_search to show me disabled watches and any watches currently showing threshold or keyword signals.",
       "Use deal_saved_view_create to save a view for my GPU watches with active signals, then run it.",
+      "Use deal_saved_view_update to rename my GPU view and tighten the selector to only enabled watches with snapshots.",
       "Use deal_watch_tag to tag my GPU watches and group them under pc-build.",
+      "Use deal_view_scan with commit true for my GPU alerts saved view, then summarize what changed.",
+      "Use deal_view_report for my GPU alerts saved view so I get alerts, trends, drops, and best opportunities in one call.",
+      "Use deal_view_bulk_update in dry-run mode to add the tag featured to all watches in my GPU alerts saved view.",
       "Use deal_watch_dedupe in dry-run mode and show me any likely duplicate watches before I clean up the list.",
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
       "Use deal_top_drops and deal_trends to show me the strongest current deals with context.",
       "Use deal_market_check for my best-looking deal and show me whether the current watch is actually the best price in my store.",
       "Use deal_watch_insights for my most volatile watch and explain whether it looks real or noisy.",
       "Use deal_watch_identity for my best current deal and tell me whether any other watches appear to be the same product.",
+      "Use deal_workflow_triage to tell me what changed, what matters, what is noisy, and what I should review first.",
+      "Use deal_workflow_best_opportunities to rank the top real deals, suspicious glitches, and strongest same-product spreads.",
+      "Use deal_workflow_cleanup to show me duplicates, disabled stale watches, weak extraction cases, and noisy watches.",
+      "Use deal_workflow_portfolio to give me an executive dashboard of my current watch portfolio.",
       "Use deal_watch_export to back up my watches, then prepare a deal_watch_import dry run for another workspace.",
       "Fetch a shared JSON watchlist with deal_watch_import_url in dry-run mode and show me what would change.",
     ],
@@ -665,9 +682,11 @@ export function buildQuickstartGuide() {
       "Set allowedHosts for the retailer domains you trust most.",
       "Use deal_watch_add to create the first watch.",
       "Use deal_saved_view_create for repeat searches once your watchlist grows beyond a few items.",
+      "Use deal_saved_view_update to keep saved views aligned with how you actually manage the watchlist.",
       "Use deal_watch_tag or deal_watch_bulk_update once you have enough watches to organize by tag or group.",
+      "Use deal_view_scan or deal_view_report when you want to work on one saved slice instead of the whole portfolio.",
       "Run deal_scan with commit true to capture the first snapshot.",
-      "Use deal_alerts, deal_trends, deal_market_check, deal_watch_identity, and deal_report to inspect what changed.",
+      "Use deal_alerts, deal_trends, deal_market_check, deal_watch_identity, deal_workflow_triage, and deal_report to inspect what changed.",
       "Use deal_watch_export before large watchlist edits or migration.",
       "Use deal_watch_import_url with dryRun first before applying a shared remote watchlist.",
     ],
@@ -675,6 +694,8 @@ export function buildQuickstartGuide() {
       "Use deal_sample_setup and show me the safest minimal config for this plugin.",
       "Use deal_watch_add to add my first watch, then run deal_scan with commit true.",
       "Use deal_report and deal_alerts to summarize the most interesting current deals.",
+      "Use deal_view_report for my saved GPU alerts view so I get a compact multi-signal report in one call.",
+      "Use deal_workflow_triage to tell me what changed and what deserves attention right now.",
       "Use deal_top_drops and deal_watch_insights to tell me whether my best-looking deal is actually unusual.",
     ],
     privacyAndSafety: [
@@ -1153,4 +1174,546 @@ export function buildScheduleAdvice(
     .sort((a, b) => a.recommendedMinutes - b.recommendedMinutes || b.watchCount - a.watchCount);
 
   return { mode, recommendations };
+}
+
+function buildExtractionCoverage(
+  watch: Watch,
+): {
+  level: "none" | "low" | "medium" | "high";
+  score: number;
+  reasons: string[];
+} {
+  const snapshot = watch.lastSnapshot;
+  if (!snapshot) {
+    return {
+      level: "none",
+      score: 0,
+      reasons: ["No committed snapshot is stored yet."],
+    };
+  }
+
+  const reasons: string[] = [];
+  let score = 0;
+  if (snapshot.title || snapshot.canonicalTitle) {
+    score += 35;
+  } else {
+    reasons.push("Missing extracted title.");
+  }
+  if (snapshot.price != null) {
+    score += 35;
+  } else {
+    reasons.push("Missing extracted price.");
+  }
+  const identityCount = getWatchIdentityFields(watch).length;
+  if (identityCount > 0) {
+    score += Math.min(20, identityCount * 10);
+  } else {
+    reasons.push("No persistent product identifiers were extracted.");
+  }
+  if (snapshot.rawSnippet) {
+    score += 10;
+  }
+  if (!reasons.length) {
+    reasons.push("Snapshot includes title, price, and at least one persistent product identifier.");
+  }
+
+  const level = score >= 80 ? "high" : score >= 60 ? "medium" : score >= 30 ? "low" : "none";
+  return { level, score, reasons };
+}
+
+function buildGroupBreakdown(watches: Watch[], limit: number) {
+  const counts = new Map<string, number>();
+  for (const watch of watches) {
+    const key = watch.group?.trim() || "(ungrouped)";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([group, count]) => ({ group, count }))
+    .sort((a, b) => b.count - a.count || a.group.localeCompare(b.group))
+    .slice(0, limit);
+}
+
+function buildTagBreakdown(watches: Watch[], limit: number) {
+  const counts = new Map<string, number>();
+  for (const watch of watches) {
+    for (const tag of watch.tags ?? []) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+    .slice(0, limit);
+}
+
+function buildSubsetStore(store: StoreFile, watches: Watch[]): StoreFile {
+  return {
+    version: store.version,
+    savedViews: store.savedViews,
+    watches,
+  };
+}
+
+function buildMarketLeaders(
+  store: StoreFile,
+  limit: number,
+): Array<{
+  watchId: string;
+  label?: string;
+  url: string;
+  latestPrice?: number;
+  bestKnownPrice?: number;
+  highestKnownPrice?: number;
+  spreadPercent?: number;
+  matchCount: number;
+  isBestKnownPrice: boolean;
+}> {
+  return store.watches
+    .map((watch) => {
+      const summary = buildMarketCheckSummary(store, watch);
+      const latestPrice = watch.lastSnapshot?.price;
+      const isBestKnownPrice =
+        latestPrice != null && summary.bestKnownPrice != null && Math.abs(latestPrice - summary.bestKnownPrice) < 0.01;
+      return {
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        latestPrice,
+        bestKnownPrice: summary.bestKnownPrice,
+        highestKnownPrice: summary.highestKnownPrice,
+        spreadPercent: summary.spread?.percentFromBest,
+        matchCount: summary.matchCount,
+        isBestKnownPrice,
+      };
+    })
+    .filter((item) => item.matchCount > 0 && (item.spreadPercent ?? 0) > 0)
+    .sort(
+      (a, b) =>
+        Number(b.isBestKnownPrice) - Number(a.isBestKnownPrice) ||
+        (b.spreadPercent ?? 0) - (a.spreadPercent ?? 0) ||
+        a.url.localeCompare(b.url),
+    )
+    .slice(0, limit);
+}
+
+export function buildWorkflowBestOpportunities(
+  store: StoreFile,
+  limit = 5,
+): {
+  watchCount: number;
+  topRealDeals: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    latestPrice?: number;
+    severity: AlertSeverity;
+    glitchScore: number;
+    savingsPercentFromPeak?: number;
+    recentPercentDelta?: number;
+    bestKnownPrice?: number;
+    marketSpreadPercent?: number;
+    isBestKnownPrice: boolean;
+    summaryLine?: string;
+    signals: string[];
+    rationale: string[];
+  }>;
+  suspiciousDeals: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    latestPrice?: number;
+    severity: AlertSeverity;
+    glitchScore: number;
+    summaryLine?: string;
+    reasons: string[];
+  }>;
+  marketLeaders: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    latestPrice?: number;
+    bestKnownPrice?: number;
+    highestKnownPrice?: number;
+    spreadPercent?: number;
+    matchCount: number;
+    isBestKnownPrice: boolean;
+  }>;
+  strongestAlerts: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    severity: AlertSeverity;
+    summaryLine?: string;
+    latestPrice?: number;
+    glitchScore: number;
+  }>;
+  actionSummary: string[];
+} {
+  const alerts = buildAlertsSummary(store, "low", Math.max(limit * 4, 20)).alerts;
+  const drops = new Map(buildTopDropsSummary(store, "vs_peak", Math.max(limit * 4, 20)).drops.map((drop) => [drop.watchId, drop]));
+  const topRealDeals = alerts
+    .map((alert) => {
+      const watch = store.watches.find((candidate) => candidate.id === alert.watchId);
+      if (!watch) return null;
+      const market = buildMarketCheckSummary(store, watch);
+      const drop = drops.get(alert.watchId);
+      const latestPrice = watch.lastSnapshot?.price;
+      const isBestKnownPrice =
+        latestPrice != null && market.bestKnownPrice != null && Math.abs(latestPrice - market.bestKnownPrice) < 0.01;
+      const rationale = [
+        ...(alert.signals.length ? [`Active signals: ${alert.signals.join(", ")}.`] : []),
+        ...(drop?.savingsPercentFromPeak != null
+          ? [`Current price is ${drop.savingsPercentFromPeak.toFixed(1)}% below the observed peak.`]
+          : []),
+        ...(market.spread?.percentFromBest != null
+          ? [
+              isBestKnownPrice
+                ? `This watch is currently the best known internal price with a ${market.spread.percentFromBest.toFixed(1)}% spread.`
+                : `Internal same-product spread is ${market.spread.percentFromBest.toFixed(1)}%.`,
+            ]
+          : []),
+      ];
+      return {
+        watchId: alert.watchId,
+        label: alert.label,
+        url: alert.url,
+        latestPrice: alert.latestPrice,
+        severity: alert.severity,
+        glitchScore: alert.glitchScore,
+        savingsPercentFromPeak: drop?.savingsPercentFromPeak,
+        recentPercentDelta: alert.percentDelta,
+        bestKnownPrice: market.bestKnownPrice,
+        marketSpreadPercent: market.spread?.percentFromBest,
+        isBestKnownPrice,
+        summaryLine: alert.summaryLine,
+        signals: alert.signals,
+        rationale,
+        score:
+          (alert.severity === "high" ? 45 : alert.severity === "medium" ? 30 : 15) +
+          Math.max(0, drop?.savingsPercentFromPeak ?? 0) +
+          Math.max(0, Math.abs(Math.min(alert.percentDelta ?? 0, 0))) +
+          (isBestKnownPrice ? 20 : 0) +
+          Math.max(0, (market.spread?.percentFromBest ?? 0) / 2) -
+          alert.glitchScore,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .filter((item) => item.glitchScore < 70)
+    .sort((a, b) => b.score - a.score || a.url.localeCompare(b.url))
+    .slice(0, limit)
+    .map(({ score: _score, ...item }) => item);
+
+  const suspiciousDeals = alerts
+    .filter((alert) => alert.glitchScore >= 60)
+    .map((alert) => ({
+      watchId: alert.watchId,
+      label: alert.label,
+      url: alert.url,
+      latestPrice: alert.latestPrice,
+      severity: alert.severity,
+      glitchScore: alert.glitchScore,
+      summaryLine: alert.summaryLine,
+      reasons: alert.glitchReasons,
+    }))
+    .slice(0, limit);
+
+  const marketLeaders = buildMarketLeaders(store, limit);
+  const strongestAlerts = alerts.slice(0, limit).map((alert) => ({
+    watchId: alert.watchId,
+    label: alert.label,
+    url: alert.url,
+    severity: alert.severity,
+    summaryLine: alert.summaryLine,
+    latestPrice: alert.latestPrice,
+    glitchScore: alert.glitchScore,
+  }));
+
+  const actionSummary: string[] = [];
+  if (topRealDeals[0]) {
+    actionSummary.push(`Start with ${topRealDeals[0].label ?? topRealDeals[0].watchId}; it currently looks like the strongest likely-real opportunity.`);
+  }
+  if (suspiciousDeals.length) {
+    actionSummary.push(`Review ${suspiciousDeals.length} suspicious/glitch-prone watch${suspiciousDeals.length === 1 ? "" : "es"} before acting automatically.`);
+  }
+  if (marketLeaders.some((item) => item.isBestKnownPrice)) {
+    actionSummary.push("At least one watch currently holds the best known internal same-product price.");
+  }
+
+  return {
+    watchCount: store.watches.length,
+    topRealDeals,
+    suspiciousDeals,
+    marketLeaders,
+    strongestAlerts,
+    actionSummary,
+  };
+}
+
+export function buildWorkflowCleanup(
+  store: StoreFile,
+  limit = 10,
+): {
+  watchCount: number;
+  duplicateGroups: Array<{
+    canonicalUrl: string;
+    keepWatchId: string;
+    duplicateWatchIds: string[];
+  }>;
+  disabledStale: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    lastSeenAt?: string;
+    reason: string;
+  }>;
+  noSnapshot: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    enabled: boolean;
+  }>;
+  weakExtraction: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    level: "none" | "low" | "medium" | "high";
+    score: number;
+    reasons: string[];
+  }>;
+  noisyWatches: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    noiseScore: number;
+    reason: string;
+    historyCount: number;
+    pricePointCount: number;
+    lastSeenAt?: string;
+  }>;
+  actionSummary: string[];
+} {
+  const byCanonicalUrl = new Map<string, Watch[]>();
+  for (const watch of store.watches) {
+    const canonicalUrl = canonicalizeWatchUrl(watch.url).toString();
+    const group = byCanonicalUrl.get(canonicalUrl) ?? [];
+    group.push(watch);
+    byCanonicalUrl.set(canonicalUrl, group);
+  }
+
+  const duplicateGroups = [...byCanonicalUrl.entries()]
+    .filter((entry) => entry[1].length > 1)
+    .map(([canonicalUrl, watches]) => {
+      const sorted = [...watches].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      return {
+        canonicalUrl,
+        keepWatchId: sorted[0]!.id,
+        duplicateWatchIds: sorted.slice(1).map((watch) => watch.id),
+      };
+    })
+    .slice(0, limit);
+
+  const disabledStale = store.watches
+    .filter((watch) => !watch.enabled)
+    .map((watch) => {
+      const history = summarizeHistory(watch);
+      return {
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        lastSeenAt: history.lastSeenAt,
+        reason:
+          history.lastSeenAt == null
+            ? "Disabled and never committed a snapshot."
+            : "Disabled watch still has historical data and may be a cleanup candidate.",
+      };
+    })
+    .slice(0, limit);
+
+  const noSnapshot = store.watches
+    .filter((watch) => !watch.lastSnapshot)
+    .slice(0, limit)
+    .map((watch) => ({
+      watchId: watch.id,
+      label: watch.label,
+      url: watch.url,
+      enabled: watch.enabled,
+    }));
+
+  const weakExtraction = store.watches
+    .map((watch) => {
+      const coverage = buildExtractionCoverage(watch);
+      return {
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        level: coverage.level,
+        score: coverage.score,
+        reasons: coverage.reasons,
+      };
+    })
+    .filter((watch) => watch.level === "none" || watch.level === "low")
+    .slice(0, limit);
+
+  const noisyWatches = buildStoreReport(store).noisyWatches.slice(0, limit);
+  const actionSummary: string[] = [];
+  if (duplicateGroups.length) {
+    actionSummary.push(`Resolve ${duplicateGroups.length} duplicate URL group${duplicateGroups.length === 1 ? "" : "s"} with deal_watch_dedupe or view-based cleanup.`);
+  }
+  if (noSnapshot.length) {
+    actionSummary.push(`Scan or remove ${noSnapshot.length} watch${noSnapshot.length === 1 ? "" : "es"} that still have no committed snapshot.`);
+  }
+  if (weakExtraction.length) {
+    actionSummary.push(`Review ${weakExtraction.length} watch${weakExtraction.length === 1 ? "" : "es"} with weak extraction quality.`);
+  }
+
+  return {
+    watchCount: store.watches.length,
+    duplicateGroups,
+    disabledStale,
+    noSnapshot,
+    weakExtraction,
+    noisyWatches,
+    actionSummary,
+  };
+}
+
+export function buildWorkflowPortfolio(
+  store: StoreFile,
+  limit = 10,
+): {
+  watchCount: number;
+  overview: ReturnType<typeof buildStoreReport>;
+  strongestAlerts: ReturnType<typeof buildAlertsSummary>;
+  topDrops: ReturnType<typeof buildTopDropsSummary>;
+  trends: ReturnType<typeof buildTrendsSummary>;
+  marketLeaders: ReturnType<typeof buildWorkflowBestOpportunities>["marketLeaders"];
+  groupBreakdown: Array<{ group: string; count: number }>;
+  tagBreakdown: Array<{ tag: string; count: number }>;
+  actionSummary: string[];
+} {
+  const overview = buildStoreReport(store);
+  const strongestAlerts = buildAlertsSummary(store, "medium", limit);
+  const topDrops = buildTopDropsSummary(store, "vs_peak", limit);
+  const trends = buildTrendsSummary(store, limit);
+  const marketLeaders = buildMarketLeaders(store, limit);
+  const groupBreakdown = buildGroupBreakdown(store.watches, limit);
+  const tagBreakdown = buildTagBreakdown(store.watches, limit);
+  const actionSummary: string[] = [];
+
+  if (strongestAlerts.alerts[0]) {
+    actionSummary.push(`The hottest current alert is ${strongestAlerts.alerts[0].label ?? strongestAlerts.alerts[0].watchId}.`);
+  }
+  if (topDrops.drops[0]) {
+    actionSummary.push(`The deepest current drop is ${topDrops.drops[0].label ?? topDrops.drops[0].watchId}.`);
+  }
+  if (overview.noisyWatches.length) {
+    actionSummary.push(`There ${overview.noisyWatches.length === 1 ? "is" : "are"} ${overview.noisyWatches.length} noisy watch${overview.noisyWatches.length === 1 ? "" : "es"} worth reviewing.`);
+  }
+
+  return {
+    watchCount: store.watches.length,
+    overview,
+    strongestAlerts,
+    topDrops,
+    trends,
+    marketLeaders,
+    groupBreakdown,
+    tagBreakdown,
+    actionSummary,
+  };
+}
+
+export function buildWorkflowTriage(
+  store: StoreFile,
+  limit = 5,
+  minSeverity: AlertSeverity = "medium",
+): {
+  watchCount: number;
+  changed: ReturnType<typeof buildStoreReport>["recentChanges"];
+  strongestAlerts: ReturnType<typeof buildAlertsSummary>["alerts"];
+  probableNoise: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    glitchScore?: number;
+    noiseScore?: number;
+    reason: string;
+  }>;
+  bestOpportunity?: ReturnType<typeof buildWorkflowBestOpportunities>["topRealDeals"][number];
+  suspiciousOpportunity?: ReturnType<typeof buildWorkflowBestOpportunities>["suspiciousDeals"][number];
+  actionSummary: string[];
+} {
+  const overview = buildStoreReport(store);
+  const best = buildWorkflowBestOpportunities(store, limit);
+  const strongestAlerts = buildAlertsSummary(store, minSeverity, limit).alerts;
+  const probableNoise = [
+    ...best.suspiciousDeals.map((item) => ({
+      watchId: item.watchId,
+      label: item.label,
+      url: item.url,
+      glitchScore: item.glitchScore,
+      score: item.glitchScore,
+      reason: item.reasons[0] ?? "Likely glitch-prone behavior.",
+    })),
+    ...overview.noisyWatches.map((item) => ({
+      watchId: item.watchId,
+      label: item.label,
+      url: item.url,
+      noiseScore: item.noiseScore,
+      score: item.noiseScore,
+      reason: item.reason,
+    })),
+  ]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ score: _score, ...item }) => item);
+
+  const actionSummary: string[] = [];
+  if (best.topRealDeals[0]) {
+    actionSummary.push(`Best current likely-real opportunity: ${best.topRealDeals[0].label ?? best.topRealDeals[0].watchId}.`);
+  }
+  if (probableNoise.length) {
+    actionSummary.push(`Treat ${probableNoise.length} watch${probableNoise.length === 1 ? "" : "es"} as noisy or suspicious until reviewed.`);
+  }
+  if (!best.topRealDeals.length && strongestAlerts.length) {
+    actionSummary.push("Alerts exist, but none currently clear the low-glitch filter for likely-real opportunities.");
+  }
+
+  return {
+    watchCount: store.watches.length,
+    changed: overview.recentChanges.slice(0, limit),
+    strongestAlerts,
+    probableNoise,
+    bestOpportunity: best.topRealDeals[0],
+    suspiciousOpportunity: best.suspiciousDeals[0],
+    actionSummary,
+  };
+}
+
+export function buildViewReport(
+  store: StoreFile,
+  watches: Watch[],
+  options?: {
+    limit?: number;
+    severity?: AlertSeverity;
+    metric?: "vs_peak" | "latest_change";
+  },
+): {
+  scopedCount: number;
+  report: ReturnType<typeof buildStoreReport>;
+  alerts: ReturnType<typeof buildAlertsSummary>;
+  trends: ReturnType<typeof buildTrendsSummary>;
+  topDrops: ReturnType<typeof buildTopDropsSummary>;
+  bestOpportunities: ReturnType<typeof buildWorkflowBestOpportunities>;
+} {
+  const scopedStore = buildSubsetStore(store, watches);
+  const limit = options?.limit ?? 10;
+  return {
+    scopedCount: watches.length,
+    report: buildStoreReport(scopedStore),
+    alerts: buildAlertsSummary(scopedStore, options?.severity ?? "low", limit),
+    trends: buildTrendsSummary(scopedStore, limit),
+    topDrops: buildTopDropsSummary(scopedStore, options?.metric ?? "vs_peak", limit),
+    bestOpportunities: buildWorkflowBestOpportunities(scopedStore, Math.min(limit, 5)),
+  };
 }

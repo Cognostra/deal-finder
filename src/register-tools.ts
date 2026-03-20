@@ -17,11 +17,16 @@ import {
   buildStoreReport,
   buildTopDropsSummary,
   buildTrendsSummary,
+  buildViewReport,
+  buildWorkflowBestOpportunities,
+  buildWorkflowCleanup,
+  buildWorkflowPortfolio,
+  buildWorkflowTriage,
   buildWatchIdentitySummary,
   buildWatchInsights,
 } from "./lib/report.js";
 import type { ImportedWatchInput } from "./lib/store.js";
-import { addSavedView, addWatch, bulkUpdateWatches, getSavedView, getWatch, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
+import { addSavedView, addWatch, bulkUpdateWatches, getSavedView, getWatch, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./lib/store.js";
 import { buildWatchSignals, searchWatches } from "./lib/watch-view.js";
 import { canonicalizeWatchUrl, validateTargetUrl } from "./lib/url-policy.js";
 
@@ -217,6 +222,31 @@ function toSavedViewSummary(store: Awaited<ReturnType<typeof loadStore>>, view: 
     ...view,
     matchCount: matches.length,
     previewWatchIds: watchIds,
+  };
+}
+
+function buildScopedStore(
+  store: Awaited<ReturnType<typeof loadStore>>,
+  watches: Awaited<ReturnType<typeof loadStore>>["watches"],
+): Awaited<ReturnType<typeof loadStore>> {
+  return {
+    version: store.version,
+    savedViews: store.savedViews,
+    watches,
+  };
+}
+
+function resolveSavedViewSelection(store: Awaited<ReturnType<typeof loadStore>>, savedViewId: string) {
+  const savedView = getSavedView(store, savedViewId);
+  if (!savedView) {
+    throw new Error(`deal-hunter: unknown saved view "${savedViewId}"`);
+  }
+  const watches = searchWatches(store.watches, savedView.selector);
+  return {
+    savedView,
+    summary: toSavedViewSummary(store, savedView),
+    watches,
+    watchIds: watches.map((watch) => watch.id),
   };
 }
 
@@ -719,6 +749,58 @@ export function registerDealTools(api: OpenClawPluginApi): void {
 
   api.registerTool(
     {
+      name: "deal_saved_view_update",
+      label: "Deal Hunter",
+      description: "Update or rename a saved watch view.",
+      parameters: Type.Object({
+        savedViewId: Type.String(),
+        name: Type.Optional(Type.String()),
+        description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        selector: Type.Optional(Type.Object({
+          query: WATCH_SELECTOR_SCHEMA.query,
+          enabled: WATCH_SELECTOR_SCHEMA.enabled,
+          hasSnapshot: WATCH_SELECTOR_SCHEMA.hasSnapshot,
+          hasSignals: WATCH_SELECTOR_SCHEMA.hasSignals,
+          tag: WATCH_SELECTOR_SCHEMA.tag,
+          group: WATCH_SELECTOR_SCHEMA.group,
+          sortBy: WATCH_SELECTOR_SCHEMA.sortBy,
+          descending: WATCH_SELECTOR_SCHEMA.descending,
+          limit: WATCH_SELECTOR_SCHEMA.limit,
+        })),
+      }),
+      execute: async (_id, params) => {
+        let updated;
+        await withStore(async (store) => {
+          if (
+            params.name &&
+            store.savedViews.some(
+              (view) => view.id !== params.savedViewId && view.name.toLowerCase() === params.name.trim().toLowerCase(),
+            )
+          ) {
+            throw new Error(`deal-hunter: a saved view named "${params.name}" already exists`);
+          }
+          updated = updateSavedView(store, params.savedViewId, {
+            name: params.name,
+            description: params.description,
+            selector: params.selector,
+          });
+          if (!updated) {
+            throw new Error(`deal-hunter: unknown saved view "${params.savedViewId}"`);
+          }
+          await saveStore(storePath, store);
+        });
+        const store = await loadStore(storePath);
+        return jsonResult({
+          ok: true,
+          savedView: toSavedViewSummary(store, updated!),
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
       name: "deal_saved_view_delete",
       label: "Deal Hunter",
       description: "Delete a saved watch search view.",
@@ -738,6 +820,94 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       },
     },
     { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_view_scan",
+      label: "Deal Hunter",
+      description: "Run deal_scan against the watches currently matched by a saved view.",
+      parameters: Type.Object({
+        savedViewId: Type.String(),
+        commit: Type.Optional(Type.Boolean({ default: true })),
+      }),
+      execute: async (_id, params, signal) => {
+        const cfg = resolveDealConfig(api);
+        const commit = params.commit !== false;
+        const scanSnapshot = await withStore(async (store) => structuredClone(store));
+        const selection = resolveSavedViewSelection(scanSnapshot, params.savedViewId);
+        const eligibleWatchIds = selection.watches.filter((watch) => watch.enabled).map((watch) => watch.id);
+
+        let results = [] as Awaited<ReturnType<typeof runScan>>;
+        if (eligibleWatchIds.length > 0) {
+          results = await runScan({
+            api,
+            cfg,
+            store: scanSnapshot,
+            storePath,
+            watchIds: eligibleWatchIds,
+            commit: false,
+            signal,
+          });
+        }
+
+        let commitSummary = null;
+        if (commit && results.length > 0) {
+          commitSummary = await withStore(async (store) => {
+            const summary = mergeCommittedScanResults(store, results, cfg);
+            await saveStore(storePath, store);
+            return summary;
+          });
+        }
+
+        const { summary, rankedAlerts } = buildScanSummary(results);
+        return jsonResult({
+          savedView: selection.summary,
+          matchedCount: selection.watches.length,
+          enabledMatchedCount: eligibleWatchIds.length,
+          disabledMatchedCount: selection.watches.length - eligibleWatchIds.length,
+          results,
+          summary,
+          rankedAlerts,
+          engine: "node",
+          commit,
+          commitSummary,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_view_report",
+      label: "Deal Hunter",
+      description: "Generate a multi-signal report for one saved view, including alerts, trends, drops, and best opportunities.",
+      parameters: Type.Object({
+        savedViewId: Type.String(),
+        severity: Type.Optional(Type.Union([
+          Type.Literal("low"),
+          Type.Literal("medium"),
+          Type.Literal("high"),
+        ])),
+        metric: Type.Optional(Type.Union([Type.Literal("vs_peak"), Type.Literal("latest_change")])),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = resolveSavedViewSelection(store, params.savedViewId);
+        const scoped = buildViewReport(store, selection.watches, {
+          limit: params.limit ?? 10,
+          severity: params.severity ?? "low",
+          metric: params.metric ?? "vs_peak",
+        });
+        return jsonResult({
+          savedView: selection.summary,
+          ...scoped,
+        });
+      },
+    },
+    { optional: false },
   );
 
   api.registerTool(
@@ -830,6 +1000,76 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         return jsonResult({
           ok: true,
           dryRun,
+          updatedCount: result.updatedIds.length,
+          missingCount: result.missingIds.length,
+          updatedIds: result.updatedIds,
+          missingIds: result.missingIds,
+          watches,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_view_bulk_update",
+      label: "Deal Hunter",
+      description: "Bulk-update all watches currently matched by a saved view. Defaults to dry-run for safety.",
+      parameters: Type.Object({
+        savedViewId: Type.String(),
+        dryRun: Type.Optional(Type.Boolean()),
+        group: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        tags: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
+        addTags: Type.Optional(Type.Array(Type.String())),
+        removeTags: Type.Optional(Type.Array(Type.String())),
+        maxPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+        percentDrop: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 100 }), Type.Null()])),
+        keywords: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
+        checkIntervalHint: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        enabled: Type.Optional(Type.Boolean()),
+        clearLastSnapshot: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params) => {
+        const dryRun = params.dryRun !== false;
+        let selectionSummary = null;
+        let result = { updatedIds: [] as string[], missingIds: [] as string[] };
+        let watches: ReturnType<typeof toWatchView>[] = [];
+
+        await withStore(async (store) => {
+          const selection = resolveSavedViewSelection(store, params.savedViewId);
+          selectionSummary = selection.summary;
+          const target = dryRun ? structuredClone(store) : store;
+          const updateResult = bulkUpdateWatches(
+            target,
+            selection.watchIds,
+            {
+              group: params.group,
+              tags: params.tags,
+              addTags: params.addTags,
+              removeTags: params.removeTags,
+              maxPrice: params.maxPrice,
+              percentDrop: params.percentDrop,
+              keywords: params.keywords,
+              checkIntervalHint: params.checkIntervalHint,
+              enabled: params.enabled,
+              clearLastSnapshot: params.clearLastSnapshot,
+            },
+          );
+          result = updateResult;
+          watches = updateResult.updatedIds
+            .map((id) => getWatch(target, id))
+            .filter((watch): watch is NonNullable<typeof watch> => Boolean(watch))
+            .map(toWatchView);
+          if (!dryRun && updateResult.updatedIds.length > 0) {
+            await saveStore(storePath, target);
+          }
+        });
+
+        return jsonResult({
+          ok: true,
+          dryRun,
+          savedView: selectionSummary,
           updatedCount: result.updatedIds.length,
           missingCount: result.missingIds.length,
           updatedIds: result.updatedIds,
@@ -1171,15 +1411,23 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_search",
               "deal_saved_view_list",
               "deal_saved_view_create",
+              "deal_saved_view_update",
               "deal_saved_view_run",
               "deal_saved_view_delete",
+              "deal_view_scan",
+              "deal_view_report",
               "deal_watch_bulk_update",
+              "deal_view_bulk_update",
               "deal_watch_tag",
               "deal_watch_dedupe",
               "deal_watch_export",
               "deal_watch_import",
               "deal_watch_import_url",
               "deal_scan",
+              "deal_workflow_portfolio",
+              "deal_workflow_triage",
+              "deal_workflow_cleanup",
+              "deal_workflow_best_opportunities",
               "deal_history",
               "deal_alerts",
               "deal_trends",
@@ -1203,6 +1451,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_search",
               "deal_saved_view_list",
               "deal_saved_view_run",
+              "deal_view_scan",
+              "deal_view_report",
               "deal_watch_export",
               "deal_fetch_url",
               "deal_extraction_debug",
@@ -1216,14 +1466,20 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
+              "deal_workflow_portfolio",
+              "deal_workflow_triage",
+              "deal_workflow_cleanup",
+              "deal_workflow_best_opportunities",
             ],
             writeTools: [
               "deal_watch_add",
               "deal_watch_update",
               "deal_watch_set_enabled",
               "deal_saved_view_create",
+              "deal_saved_view_update",
               "deal_saved_view_delete",
               "deal_watch_bulk_update",
+              "deal_view_bulk_update",
               "deal_watch_tag",
               "deal_watch_dedupe",
               "deal_watch_remove",
@@ -1232,7 +1488,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_scan",
             ],
             examplePrompt:
-              "Use deal_saved_view_run for my GPU alerts view, then use deal_top_drops, deal_market_check, deal_watch_identity, and deal_watch_insights to explain which watch looks like the strongest real deal right now.",
+              "Use deal_view_report for my GPU alerts view, then use deal_workflow_best_opportunities to explain which watch looks like the strongest real deal right now.",
           },
           cron: {
             example:
@@ -1300,6 +1556,99 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         return jsonResult({
           ...report,
           watches: store.watches.map(toWatchView),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_workflow_portfolio",
+      label: "Deal Hunter",
+      description: "Produce a portfolio-style dashboard for the whole watchlist or a saved view.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildWorkflowPortfolio(scopedStore, params.limit ?? 10),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_workflow_triage",
+      label: "Deal Hunter",
+      description: "Answer what changed, what matters, what looks noisy, and what should be reviewed first.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        severity: Type.Optional(Type.Union([
+          Type.Literal("low"),
+          Type.Literal("medium"),
+          Type.Literal("high"),
+        ])),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildWorkflowTriage(scopedStore, params.limit ?? 5, params.severity ?? "medium"),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_workflow_cleanup",
+      label: "Deal Hunter",
+      description: "Surface duplicate, stale, weak-extraction, and noisy watches that are good cleanup candidates.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildWorkflowCleanup(scopedStore, params.limit ?? 10),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_workflow_best_opportunities",
+      label: "Deal Hunter",
+      description: "Rank the strongest likely-real deals, suspicious glitches, and best same-product internal spreads.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildWorkflowBestOpportunities(scopedStore, Math.min(params.limit ?? 5, 20)),
         });
       },
     },

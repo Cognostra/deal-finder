@@ -87,9 +87,13 @@ agents: {
           "deal_watch_search",
           "deal_saved_view_list",
           "deal_saved_view_create",
+          "deal_saved_view_update",
           "deal_saved_view_run",
           "deal_saved_view_delete",
+          "deal_view_scan",
+          "deal_view_report",
           "deal_watch_bulk_update",
+          "deal_view_bulk_update",
           "deal_watch_tag",
           "deal_watch_dedupe",
           "deal_watch_export",
@@ -103,6 +107,10 @@ agents: {
           "deal_help",
           "deal_quickstart",
           "deal_report",
+          "deal_workflow_portfolio",
+          "deal_workflow_triage",
+          "deal_workflow_cleanup",
+          "deal_workflow_best_opportunities",
           "deal_health",
           "deal_history",
           "deal_alerts",
@@ -132,9 +140,13 @@ agents: {
 | `deal_watch_search` | Search/filter/sort watches by query, enabled state, snapshot state, signals, tag, group, or price. |
 | `deal_saved_view_list` | List saved watch search views and their current match counts. |
 | `deal_saved_view_create` | Save a reusable watch search/filter view for larger watchlists. |
+| `deal_saved_view_update` | Rename or retarget an existing saved view. |
 | `deal_saved_view_run` | Run a saved view and return the current matching watches. |
 | `deal_saved_view_delete` | Delete a saved watch search view. |
+| `deal_view_scan` | Run `deal_scan` against the watches currently matched by one saved view. |
+| `deal_view_report` | Generate alerts, trends, drops, and best-opportunity summaries for one saved view. |
 | `deal_watch_bulk_update` | Bulk-update watches selected by ids or search filters; dry-run by default. |
+| `deal_view_bulk_update` | Bulk-update all watches currently matched by one saved view; dry-run by default. |
 | `deal_watch_tag` | Add, remove, or replace tags and assign groups across matching watches. |
 | `deal_watch_dedupe` | Find or resolve likely duplicate watches using canonicalized URLs. |
 | `deal_watch_export` | Export watches, optionally including snapshots and history, for backup or migration. |
@@ -148,6 +160,10 @@ agents: {
 | `deal_help` | Show install, tool, cron, and safety guidance from inside OpenClaw. |
 | `deal_quickstart` | Show a first-run checklist, starter prompts, and privacy/safety reminders. |
 | `deal_report` | Summarize the watchlist, price leaders, recent changes, noisy watches, and glitch candidates. |
+| `deal_workflow_portfolio` | Build a portfolio dashboard for the whole watchlist or a saved view. |
+| `deal_workflow_triage` | Answer what changed, what matters, what looks noisy, and what to review first. |
+| `deal_workflow_cleanup` | Surface duplicates, stale/disabled items, weak extraction cases, and noisy cleanup candidates. |
+| `deal_workflow_best_opportunities` | Rank top likely-real deals, suspicious glitches, strongest alerts, and same-product price spreads. |
 | `deal_health` | Show configuration, storage, safety posture, and operational recommendations. |
 | `deal_history` | Show per-watch price history, recent deltas, and lowest/highest seen prices. |
 | `deal_alerts` | Rank current threshold, keyword, and recent high-severity watch signals. |
@@ -170,15 +186,18 @@ Recommended first-run workflow:
 4. `deal_watch_add` to create the first watch.
 5. `deal_watch_search` to inspect watches and current threshold/keyword signals.
 6. `deal_saved_view_create` once you have a search you expect to reuse, like "GPU alerts" or "disabled watches with snapshots".
-7. `deal_watch_tag` or `deal_watch_bulk_update` to organize watches into tags and groups as the list grows.
-8. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
-9. `deal_scan` with `commit: true` to capture snapshots.
-10. `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
-11. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-12. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
-13. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
-14. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-15. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+7. `deal_saved_view_update` once you know which saved slices actually deserve their own workflow.
+8. `deal_watch_tag`, `deal_watch_bulk_update`, or `deal_view_bulk_update` to organize watches into tags and groups as the list grows.
+9. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
+10. `deal_scan` with `commit: true` to capture snapshots, then `deal_view_scan` when you want to scan only one saved slice.
+11. `deal_view_report`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
+12. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
+13. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
+14. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+15. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+16. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+17. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+18. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -262,8 +281,17 @@ Watch management now also includes:
 - URL canonicalization that strips common tracking params before storage and dedupe checks
 - optional `group` and `tags` metadata for organizing larger watchlists
 - saved views for repeat watchlist searches and imported-list navigation
+- saved-view execution targets for scanning, reporting, and bulk updates
 - bulk update and tag tools that are dry-run-first for safer agent workflows
 - dedupe reporting and duplicate resolution based on canonicalized URLs
+
+Workflow-oriented tools now also include:
+
+- `deal_view_report` for one-call saved-view reporting
+- `deal_workflow_triage` for change review and prioritization
+- `deal_workflow_cleanup` for list hygiene and extraction-quality review
+- `deal_workflow_portfolio` for an executive dashboard
+- `deal_workflow_best_opportunities` for decisive “best deal vs suspicious glitch” ranking
 
 Network guardrails:
 

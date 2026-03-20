@@ -139,6 +139,35 @@ export function getSavedView(store: StoreFile, id: string): SavedWatchView | und
   return store.savedViews.find((view) => view.id === id);
 }
 
+export function updateSavedView(
+  store: StoreFile,
+  id: string,
+  patch: {
+    name?: string;
+    description?: string | null;
+    selector?: WatchSelector;
+  },
+): SavedWatchView | undefined {
+  const view = getSavedView(store, id);
+  if (!view) return undefined;
+
+  if ("name" in patch && patch.name != null) {
+    const name = patch.name.trim();
+    if (!name) {
+      throw new Error('deal-hunter: saved view name cannot be empty');
+    }
+    view.name = name;
+  }
+  if ("description" in patch) {
+    view.description = patch.description?.trim() || undefined;
+  }
+  if ("selector" in patch && patch.selector != null) {
+    view.selector = normalizeSelector(patch.selector);
+  }
+
+  return view;
+}
+
 export function removeSavedView(store: StoreFile, id: string): boolean {
   const index = store.savedViews.findIndex((view) => view.id === id);
   if (index === -1) return false;
