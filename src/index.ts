@@ -53,7 +53,7 @@ export default {
   id: "openclaw-deal-hunter",
   name: "Deal Hunter",
   description: "Price watches, conditional GET scans, and heuristic deal signals for OpenClaw.",
-  version: "0.4.0",
+  version: "0.5.0",
   configSchema,
   register(api: OpenClawPluginApi) {
     registerDealTools(api);
