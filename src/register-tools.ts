@@ -4,7 +4,7 @@ import { jsonResult, withFileLock } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "./config.js";
 import { mergeCommittedScanResults, runScan } from "./lib/engine.js";
 import { cappedFetch } from "./lib/fetch.js";
-import { debugExtractListing, evaluateListingText } from "./lib/heuristics.js";
+import { canonicalizeTitle, debugExtractListing, evaluateListingText } from "./lib/heuristics.js";
 import { runLlmReviewCandidate } from "./lib/llm-review.js";
 import {
   buildAlertsSummary,
@@ -33,7 +33,7 @@ import {
   buildWatchInsights,
 } from "./lib/report.js";
 import type { ImportedWatchInput } from "./lib/store.js";
-import { addSavedView, addWatch, bulkUpdateWatches, getSavedView, getWatch, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./lib/store.js";
+import { addSavedView, addWatch, applyWatchSnapshotPatch, bulkUpdateWatches, getSavedView, getWatch, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./lib/store.js";
 import { buildWatchFromTemplate, listWatchTemplates } from "./lib/templates.js";
 import { buildWatchSignals, searchWatches } from "./lib/watch-view.js";
 import { canonicalizeWatchUrl, validateTargetUrl } from "./lib/url-policy.js";
@@ -1537,6 +1537,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_best_price_board",
               "deal_llm_review_queue",
               "deal_llm_review_run",
+              "deal_llm_review_apply",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1599,6 +1600,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_import_url",
               "deal_scan",
               "deal_llm_review_run",
+              "deal_llm_review_apply",
             ],
             examplePrompt:
               "Use deal_template_list to choose the right starter template, then use deal_watch_add_template in dry-run mode before saving a new watch.",
@@ -2158,6 +2160,88 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           },
           output: result.json,
           rawText: result.rawText,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_llm_review_apply",
+      label: "Deal Hunter",
+      description: "Apply reviewed extraction or identity fields back onto a watch snapshot. Defaults to dry-run preview.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        review: Type.Object({
+          title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          canonicalTitle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          brand: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          modelId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          sku: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          mpn: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          gtin: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          asin: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          price: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          currency: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          rawSnippet: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        dryRun: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "watch not found" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+
+        const before = watch.lastSnapshot ? { ...watch.lastSnapshot } : undefined;
+        const computedCanonicalTitle =
+          "canonicalTitle" in params.review
+            ? params.review.canonicalTitle
+            : (typeof params.review.title === "string" ? canonicalizeTitle(params.review.title) : undefined);
+
+        const patch = {
+          title: params.review.title,
+          canonicalTitle: computedCanonicalTitle,
+          brand: params.review.brand,
+          modelId: params.review.modelId,
+          sku: params.review.sku,
+          mpn: params.review.mpn,
+          gtin: params.review.gtin,
+          asin: params.review.asin,
+          price: params.review.price,
+          currency: params.review.currency,
+          rawSnippet: params.review.rawSnippet,
+        };
+
+        if (params.dryRun !== false) {
+          const previewStore = structuredClone(store);
+          const previewWatch = applyWatchSnapshotPatch(previewStore, params.watchId, patch)!;
+          return jsonResult({
+            ok: true,
+            dryRun: true,
+            watchId: params.watchId,
+            before,
+            after: previewWatch.lastSnapshot,
+          });
+        }
+
+        let updated: Awaited<ReturnType<typeof loadStore>>["watches"][number] | undefined;
+        await withStore(async (lockedStore) => {
+          updated = applyWatchSnapshotPatch(lockedStore, params.watchId, patch);
+          await saveStore(storePath, lockedStore);
+        });
+
+        return jsonResult({
+          ok: true,
+          dryRun: false,
+          watchId: params.watchId,
+          before,
+          after: updated?.lastSnapshot,
         });
       },
     },

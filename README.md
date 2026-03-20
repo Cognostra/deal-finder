@@ -125,6 +125,7 @@ agents: {
           "deal_best_price_board",
           "deal_llm_review_queue",
           "deal_llm_review_run",
+          "deal_llm_review_apply",
           "deal_watch_insights",
           "deal_watch_identity",
           "deal_schedule_advice",
@@ -186,6 +187,7 @@ agents: {
 | `deal_best_price_board` | Rank grouped same-product opportunities by current internal spread and best-known watch. |
 | `deal_llm_review_queue` | Prepare low-confidence extraction or identity cases for optional manual or `llm-task` JSON review. |
 | `deal_llm_review_run` | Execute one queued extraction or identity review through the embedded OpenClaw runtime and return JSON. |
+| `deal_llm_review_apply` | Apply reviewed extraction or identity fields back onto a watch snapshot with dry-run preview support. |
 | `deal_watch_insights` | Explain one watch in depth: trend, volatility, glitch risk, and active signals. |
 | `deal_watch_identity` | Show stored product identifiers for a watch and any other watches sharing those identifiers. |
 | `deal_schedule_advice` | Recommend scan cadence by host or watch from observed history timing. |
@@ -215,12 +217,13 @@ Recommended first-run workflow:
 17. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
 18. `deal_llm_review_queue` if weak extraction or identity cases still need optional model-assisted review.
 19. `deal_llm_review_run` when you want one queued review executed immediately through your current OpenClaw model setup.
-20. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
-21. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-22. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
-23. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
-24. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-25. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+20. `deal_llm_review_apply` in `dryRun: true` mode before writing reviewed extraction or identity fields back to a watch snapshot.
+21. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
+22. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+23. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+24. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+25. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+26. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -301,6 +304,7 @@ Instead, the plugin exposes an explicit opt-in review path:
 
 - `deal_llm_review_queue` prepares the exact cases that would benefit from optional review
 - `deal_llm_review_run` executes one queued case through the embedded OpenClaw runtime using your current provider/model setup or explicit overrides
+- `deal_llm_review_apply` lets you write reviewed fields back to the watch snapshot with a dry-run-first preview
 
 The queue still matters because it keeps the expensive path narrow and explainable. It identifies:
 

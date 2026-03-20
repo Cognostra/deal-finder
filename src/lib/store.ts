@@ -297,6 +297,21 @@ export type WatchUpdatePatch = {
   clearLastSnapshot?: boolean;
 };
 
+export type WatchSnapshotPatch = {
+  title?: string | null;
+  canonicalTitle?: string | null;
+  brand?: string | null;
+  modelId?: string | null;
+  sku?: string | null;
+  mpn?: string | null;
+  gtin?: string | null;
+  asin?: string | null;
+  price?: number | null;
+  currency?: string | null;
+  rawSnippet?: string | null;
+  fetchedAt?: string;
+};
+
 export function updateWatch(store: StoreFile, id: string, patch: WatchUpdatePatch): Watch | undefined {
   const watch = getWatch(store, id);
   if (!watch) return undefined;
@@ -312,6 +327,31 @@ export function updateWatch(store: StoreFile, id: string, patch: WatchUpdatePatc
   if ("enabled" in patch && patch.enabled != null) watch.enabled = patch.enabled;
   if (patch.clearLastSnapshot) watch.lastSnapshot = undefined;
 
+  return watch;
+}
+
+export function applyWatchSnapshotPatch(store: StoreFile, id: string, patch: WatchSnapshotPatch): Watch | undefined {
+  const watch = getWatch(store, id);
+  if (!watch) return undefined;
+
+  const nextSnapshot = watch.lastSnapshot
+    ? { ...watch.lastSnapshot }
+    : { fetchedAt: patch.fetchedAt ?? new Date().toISOString() };
+
+  if ("title" in patch) nextSnapshot.title = patch.title ?? undefined;
+  if ("canonicalTitle" in patch) nextSnapshot.canonicalTitle = patch.canonicalTitle ?? undefined;
+  if ("brand" in patch) nextSnapshot.brand = patch.brand ?? undefined;
+  if ("modelId" in patch) nextSnapshot.modelId = patch.modelId ?? undefined;
+  if ("sku" in patch) nextSnapshot.sku = patch.sku ?? undefined;
+  if ("mpn" in patch) nextSnapshot.mpn = patch.mpn ?? undefined;
+  if ("gtin" in patch) nextSnapshot.gtin = patch.gtin ?? undefined;
+  if ("asin" in patch) nextSnapshot.asin = patch.asin ?? undefined;
+  if ("price" in patch) nextSnapshot.price = patch.price ?? undefined;
+  if ("currency" in patch) nextSnapshot.currency = patch.currency ?? undefined;
+  if ("rawSnippet" in patch) nextSnapshot.rawSnippet = patch.rawSnippet ?? undefined;
+  if ("fetchedAt" in patch && patch.fetchedAt) nextSnapshot.fetchedAt = patch.fetchedAt;
+
+  watch.lastSnapshot = nextSnapshot;
   return watch;
 }
 

@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { addSavedView, addWatch, appendWatchHistory, bulkUpdateWatches, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./store.js";
+import { addSavedView, addWatch, appendWatchHistory, applyWatchSnapshotPatch, bulkUpdateWatches, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./store.js";
 
 let tempDirs: string[] = [];
 
@@ -104,6 +104,38 @@ describe("store", () => {
       checkIntervalHint: undefined,
       enabled: false,
       lastSnapshot: undefined,
+    });
+  });
+
+  it("applies reviewed snapshot fields onto an existing snapshot", () => {
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
+    const watch = addWatch(store, {
+      url: "http://shop.test/item",
+      lastSnapshot: {
+        title: "Old Title",
+        canonicalTitle: "old title",
+        price: 20,
+        currency: "USD",
+        fetchedAt: "2026-03-20T00:00:00.000Z",
+      },
+    });
+
+    const updated = applyWatchSnapshotPatch(store, watch.id, {
+      title: "New Title",
+      canonicalTitle: "new title",
+      brand: "Acme",
+      modelId: "W-1",
+      price: 18,
+    });
+
+    expect(updated?.lastSnapshot).toMatchObject({
+      title: "New Title",
+      canonicalTitle: "new title",
+      brand: "Acme",
+      modelId: "W-1",
+      price: 18,
+      currency: "USD",
+      fetchedAt: "2026-03-20T00:00:00.000Z",
     });
   });
 

@@ -207,6 +207,7 @@ describe("buildSampleSetup", () => {
     expect(sample.allowlist).toContain("deal_saved_view_create");
     expect(sample.allowlist).toContain("deal_market_check");
     expect(sample.allowlist).toContain("deal_llm_review_run");
+    expect(sample.allowlist).toContain("deal_llm_review_apply");
     expect(sample.examplePrompts.length).toBeGreaterThan(0);
   });
 });
@@ -219,6 +220,7 @@ describe("buildQuickstartGuide", () => {
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_watch_taxonomy"))).toBe(true);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_host_report"))).toBe(true);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_llm_review_run"))).toBe(true);
+    expect(guide.firstRunChecklist.some((item) => item.includes("deal_llm_review_apply"))).toBe(true);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_watch_import_url"))).toBe(true);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_saved_view_create"))).toBe(true);
     expect(guide.privacyAndSafety.some((item) => item.includes("allowedHosts"))).toBe(true);
