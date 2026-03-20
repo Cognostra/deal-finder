@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { addWatch, appendWatchHistory, bulkUpdateWatches, importWatches, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
+import { addWatch, appendWatchHistory, bulkUpdateWatches, importWatches, loadStore, parseImportedWatchPayload, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
 
 let tempDirs: string[] = [];
 
@@ -319,5 +319,106 @@ describe("store", () => {
       url: "http://shop.test/new",
       label: "New",
     });
+  });
+
+  it("records remote import source metadata when supplied", () => {
+    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+
+    importWatches(
+      store,
+      [
+        {
+          url: "http://shop.test/new",
+          label: "Remote Import",
+        },
+      ],
+      "append",
+      {
+        importSourceOverride: {
+          type: "url",
+          url: "https://example.com/watchlist.json",
+          importedAt: "2026-03-20T12:00:00.000Z",
+        },
+      },
+    );
+
+    expect(store.watches[0]?.importSource).toEqual({
+      type: "url",
+      url: "https://example.com/watchlist.json",
+      importedAt: "2026-03-20T12:00:00.000Z",
+    });
+  });
+
+  it("parses exported payload objects and preserves snapshot/history/source metadata", () => {
+    const parsed = parseImportedWatchPayload({
+      exportedAt: "2026-03-20T12:00:00.000Z",
+      watches: [
+        {
+          url: "https://example.com/item",
+          label: "Widget",
+          importSource: {
+            type: "url",
+            url: "https://example.com/watchlist.json",
+            importedAt: "2026-03-20T11:00:00.000Z",
+          },
+          lastSnapshot: {
+            title: "Widget",
+            price: 19.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T11:30:00.000Z",
+          },
+          history: [
+            {
+              fetchedAt: "2026-03-20T11:30:00.000Z",
+              price: 19.99,
+              currency: "USD",
+              alertSeverity: "low",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(parsed).toEqual([
+      {
+        url: "https://example.com/item",
+        label: "Widget",
+        importSource: {
+          type: "url",
+          url: "https://example.com/watchlist.json",
+          importedAt: "2026-03-20T11:00:00.000Z",
+        },
+        lastSnapshot: {
+          title: "Widget",
+          canonicalTitle: undefined,
+          price: 19.99,
+          currency: "USD",
+          etag: undefined,
+          lastModified: undefined,
+          contentHash: undefined,
+          fetchedAt: "2026-03-20T11:30:00.000Z",
+          rawSnippet: undefined,
+        },
+        history: [
+          {
+            fetchedAt: "2026-03-20T11:30:00.000Z",
+            price: 19.99,
+            currency: "USD",
+            title: undefined,
+            canonicalTitle: undefined,
+            contentHash: undefined,
+            changeType: undefined,
+            alertSeverity: "low",
+            alerts: undefined,
+            summaryLine: undefined,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("rejects malformed remote import payloads", () => {
+    expect(() => parseImportedWatchPayload({ watches: [{ label: "Missing URL" }] })).toThrow(/missing a string url/i);
+    expect(() => parseImportedWatchPayload({ nope: true })).toThrow(/non-empty "watches" array/i);
   });
 });

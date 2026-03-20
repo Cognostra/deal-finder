@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ScanResultItem, StoreFile, Watch, WatchHistoryEntry } from "../types.js";
+import type { ScanResultItem, StoreFile, Watch, WatchHistoryEntry, WatchImportSource } from "../types.js";
 
 const MAX_HISTORY_ENTRIES = 60;
 
@@ -69,6 +69,7 @@ export type ImportedWatchInput = {
   checkIntervalHint?: string;
   enabled?: boolean;
   createdAt?: string;
+  importSource?: WatchImportSource;
   lastSnapshot?: Watch["lastSnapshot"];
   history?: WatchHistoryEntry[];
 };
@@ -86,7 +87,14 @@ function cloneHistory(history: WatchHistoryEntry[] | undefined): WatchHistoryEnt
   }));
 }
 
-function materializeImportedWatch(input: ImportedWatchInput, options?: { preserveId?: boolean }): Watch {
+function cloneImportSource(source: WatchImportSource | undefined): WatchImportSource | undefined {
+  return source ? { ...source } : undefined;
+}
+
+function materializeImportedWatch(
+  input: ImportedWatchInput,
+  options?: { preserveId?: boolean; importSourceOverride?: WatchImportSource },
+): Watch {
   return {
     id: options?.preserveId && input.id ? input.id : randomUUID(),
     url: input.url,
@@ -99,6 +107,7 @@ function materializeImportedWatch(input: ImportedWatchInput, options?: { preserv
     checkIntervalHint: input.checkIntervalHint,
     enabled: input.enabled ?? true,
     createdAt: input.createdAt ?? new Date().toISOString(),
+    importSource: cloneImportSource(options?.importSourceOverride ?? input.importSource),
     lastSnapshot: cloneWatchSnapshot(input.lastSnapshot),
     history: cloneHistory(input.history),
   };
@@ -265,6 +274,9 @@ export function importWatches(
   store: StoreFile,
   watches: ImportedWatchInput[],
   mode: ImportMode,
+  options?: {
+    importSourceOverride?: WatchImportSource;
+  },
 ): {
   added: number;
   updated: number;
@@ -287,7 +299,10 @@ export function importWatches(
     if (mode !== "append") {
       const existingById = incoming.id ? store.watches.find((watch) => watch.id === incoming.id) : undefined;
       if (existingById) {
-        Object.assign(existingById, materializeImportedWatch(incoming, { preserveId: true }));
+        Object.assign(existingById, materializeImportedWatch(incoming, {
+          preserveId: true,
+          importSourceOverride: options?.importSourceOverride,
+        }));
         imported.push(existingById);
         updated += 1;
         matchedById += 1;
@@ -296,7 +311,10 @@ export function importWatches(
 
       const existingByUrl = store.watches.find((watch) => watch.url === incoming.url);
       if (existingByUrl) {
-        const replacement = materializeImportedWatch(incoming, { preserveId: true });
+        const replacement = materializeImportedWatch(incoming, {
+          preserveId: true,
+          importSourceOverride: options?.importSourceOverride,
+        });
         replacement.id = existingByUrl.id;
         replacement.createdAt = existingByUrl.createdAt;
         Object.assign(existingByUrl, replacement);
@@ -307,7 +325,10 @@ export function importWatches(
       }
     }
 
-    const addedWatch = materializeImportedWatch(incoming, { preserveId: mode === "replace" || mode === "upsert" });
+    const addedWatch = materializeImportedWatch(incoming, {
+      preserveId: mode === "replace" || mode === "upsert",
+      importSourceOverride: options?.importSourceOverride,
+    });
     store.watches.push(addedWatch);
     imported.push(addedWatch);
     added += 1;
@@ -321,4 +342,152 @@ export function importWatches(
     matchedById,
     matchedByUrl,
   };
+}
+
+function expectOptionalString(value: unknown, field: string): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`deal-hunter: imported watch field "${field}" must be a string when present`);
+  }
+  return value;
+}
+
+function expectOptionalNumber(value: unknown, field: string): number | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    throw new Error(`deal-hunter: imported watch field "${field}" must be a number when present`);
+  }
+  return value;
+}
+
+function expectOptionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "boolean") {
+    throw new Error(`deal-hunter: imported watch field "${field}" must be a boolean when present`);
+  }
+  return value;
+}
+
+function expectOptionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value == null) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`deal-hunter: imported watch field "${field}" must be an array of strings when present`);
+  }
+  return [...value];
+}
+
+function expectOptionalImportSource(value: unknown): WatchImportSource | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "object") {
+    throw new Error('deal-hunter: imported watch field "importSource" must be an object when present');
+  }
+  const obj = value as Record<string, unknown>;
+  if (obj.type !== "url") {
+    throw new Error('deal-hunter: imported watch field "importSource.type" must be "url"');
+  }
+  const url = expectOptionalString(obj.url, "importSource.url");
+  const importedAt = expectOptionalString(obj.importedAt, "importSource.importedAt");
+  if (!url || !importedAt) {
+    throw new Error('deal-hunter: imported watch field "importSource" requires both url and importedAt');
+  }
+  return {
+    type: "url",
+    url,
+    importedAt,
+  };
+}
+
+function expectOptionalLastSnapshot(value: unknown): Watch["lastSnapshot"] {
+  if (value == null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error('deal-hunter: imported watch field "lastSnapshot" must be an object when present');
+  }
+  const obj = value as Record<string, unknown>;
+  const fetchedAt = expectOptionalString(obj.fetchedAt, "lastSnapshot.fetchedAt");
+  if (!fetchedAt) {
+    throw new Error('deal-hunter: imported watch field "lastSnapshot.fetchedAt" is required when lastSnapshot is present');
+  }
+  return {
+    title: expectOptionalString(obj.title, "lastSnapshot.title"),
+    canonicalTitle: expectOptionalString(obj.canonicalTitle, "lastSnapshot.canonicalTitle"),
+    price: expectOptionalNumber(obj.price, "lastSnapshot.price"),
+    currency: expectOptionalString(obj.currency, "lastSnapshot.currency"),
+    etag: expectOptionalString(obj.etag, "lastSnapshot.etag"),
+    lastModified: expectOptionalString(obj.lastModified, "lastSnapshot.lastModified"),
+    contentHash: expectOptionalString(obj.contentHash, "lastSnapshot.contentHash"),
+    fetchedAt,
+    rawSnippet: expectOptionalString(obj.rawSnippet, "lastSnapshot.rawSnippet"),
+  };
+}
+
+function expectOptionalHistory(value: unknown): WatchHistoryEntry[] | undefined {
+  if (value == null) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error('deal-hunter: imported watch field "history" must be an array when present');
+  }
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`deal-hunter: imported history entry at index ${index} must be an object`);
+    }
+    const obj = entry as Record<string, unknown>;
+    const fetchedAt = expectOptionalString(obj.fetchedAt, `history[${index}].fetchedAt`);
+    if (!fetchedAt) {
+      throw new Error(`deal-hunter: imported history entry at index ${index} requires fetchedAt`);
+    }
+    return {
+      fetchedAt,
+      price: expectOptionalNumber(obj.price, `history[${index}].price`),
+      currency: expectOptionalString(obj.currency, `history[${index}].currency`),
+      title: expectOptionalString(obj.title, `history[${index}].title`),
+      canonicalTitle: expectOptionalString(obj.canonicalTitle, `history[${index}].canonicalTitle`),
+      contentHash: expectOptionalString(obj.contentHash, `history[${index}].contentHash`),
+      changeType: expectOptionalString(obj.changeType, `history[${index}].changeType`) as WatchHistoryEntry["changeType"],
+      alertSeverity: expectOptionalString(obj.alertSeverity, `history[${index}].alertSeverity`) as WatchHistoryEntry["alertSeverity"],
+      alerts: expectOptionalStringArray(obj.alerts, `history[${index}].alerts`),
+      summaryLine: expectOptionalString(obj.summaryLine, `history[${index}].summaryLine`),
+    };
+  });
+}
+
+function parseImportedWatch(value: unknown, index: number): ImportedWatchInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`deal-hunter: imported watch at index ${index} must be an object`);
+  }
+
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.url !== "string" || !obj.url.trim()) {
+    throw new Error(`deal-hunter: imported watch at index ${index} is missing a string url`);
+  }
+
+  return {
+    id: expectOptionalString(obj.id, "id"),
+    url: obj.url,
+    label: expectOptionalString(obj.label, "label"),
+    group: expectOptionalString(obj.group, "group"),
+    tags: expectOptionalStringArray(obj.tags, "tags"),
+    maxPrice: expectOptionalNumber(obj.maxPrice, "maxPrice"),
+    percentDrop: expectOptionalNumber(obj.percentDrop, "percentDrop"),
+    keywords: expectOptionalStringArray(obj.keywords, "keywords"),
+    checkIntervalHint: expectOptionalString(obj.checkIntervalHint, "checkIntervalHint"),
+    enabled: expectOptionalBoolean(obj.enabled, "enabled"),
+    createdAt: expectOptionalString(obj.createdAt, "createdAt"),
+    importSource: expectOptionalImportSource(obj.importSource),
+    lastSnapshot: expectOptionalLastSnapshot(obj.lastSnapshot),
+    history: expectOptionalHistory(obj.history),
+  };
+}
+
+export function parseImportedWatchPayload(payload: unknown): ImportedWatchInput[] {
+  const watchesPayload =
+    Array.isArray(payload)
+      ? payload
+      : payload && typeof payload === "object" && Array.isArray((payload as Record<string, unknown>).watches)
+        ? ((payload as Record<string, unknown>).watches as unknown[])
+        : null;
+
+  if (!watchesPayload?.length) {
+    throw new Error('deal-hunter: imported payload must be a non-empty array of watches or an object with a non-empty "watches" array');
+  }
+
+  return watchesPayload.map((watch, index) => parseImportedWatch(watch, index));
 }

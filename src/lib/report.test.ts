@@ -183,6 +183,7 @@ describe("buildSampleSetup", () => {
     expect(sample.allowlist).toContain("deal_watch_add");
     expect(sample.allowlist).toContain("deal_history");
     expect(sample.allowlist).toContain("deal_watch_import");
+    expect(sample.allowlist).toContain("deal_watch_import_url");
     expect(sample.examplePrompts.length).toBeGreaterThan(0);
   });
 });
@@ -192,6 +193,7 @@ describe("buildQuickstartGuide", () => {
     const guide = buildQuickstartGuide();
     expect(guide.installCommand).toContain("openclaw plugins install");
     expect(guide.firstRunChecklist.length).toBeGreaterThan(3);
+    expect(guide.firstRunChecklist.some((item) => item.includes("deal_watch_import_url"))).toBe(true);
     expect(guide.privacyAndSafety.some((item) => item.includes("allowedHosts"))).toBe(true);
     expect(guide.troubleshooting.some((item) => item.includes("deal_doctor"))).toBe(true);
   });

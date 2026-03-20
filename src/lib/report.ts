@@ -521,6 +521,7 @@ export function buildSampleSetup() {
       "deal_watch_dedupe",
       "deal_watch_export",
       "deal_watch_import",
+      "deal_watch_import_url",
       "deal_watch_remove",
       "deal_scan",
       "deal_fetch_url",
@@ -550,6 +551,7 @@ export function buildSampleSetup() {
       "Use deal_top_drops and deal_trends to show me the strongest current deals with context.",
       "Use deal_watch_insights for my most volatile watch and explain whether it looks real or noisy.",
       "Use deal_watch_export to back up my watches, then prepare a deal_watch_import dry run for another workspace.",
+      "Fetch a shared JSON watchlist with deal_watch_import_url in dry-run mode and show me what would change.",
     ],
     cronExample:
       "openclaw cron add --name \"Deal scan\" --cron \"0 * * * *\" --session isolated --message \"Run deal_scan with commit true for all enabled watches. Summarize any alerts.\" --announce",
@@ -567,6 +569,7 @@ export function buildQuickstartGuide() {
       "Run deal_scan with commit true to capture the first snapshot.",
       "Use deal_alerts, deal_trends, and deal_report to inspect what changed.",
       "Use deal_watch_export before large watchlist edits or migration.",
+      "Use deal_watch_import_url with dryRun first before applying a shared remote watchlist.",
     ],
     recommendedPrompts: [
       "Use deal_sample_setup and show me the safest minimal config for this plugin.",

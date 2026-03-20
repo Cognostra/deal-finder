@@ -39,6 +39,12 @@ export type WatchHistoryEntry = {
   summaryLine?: string;
 };
 
+export type WatchImportSource = {
+  type: "url";
+  url: string;
+  importedAt: string;
+};
+
 export type Watch = {
   id: string;
   url: string;
@@ -51,6 +57,7 @@ export type Watch = {
   checkIntervalHint?: string;
   enabled: boolean;
   createdAt: string;
+  importSource?: WatchImportSource;
   lastSnapshot?: WatchSnapshot;
   history?: WatchHistoryEntry[];
 };

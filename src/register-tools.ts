@@ -19,7 +19,7 @@ import {
   buildWatchInsights,
 } from "./lib/report.js";
 import type { ImportedWatchInput } from "./lib/store.js";
-import { addWatch, bulkUpdateWatches, getWatch, importWatches, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
+import { addWatch, bulkUpdateWatches, getWatch, importWatches, loadStore, parseImportedWatchPayload, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
 import { buildWatchSignals, searchWatches } from "./lib/watch-view.js";
 import { canonicalizeWatchUrl, validateTargetUrl } from "./lib/url-policy.js";
 
@@ -87,6 +87,7 @@ function toWatchView(watch: Awaited<ReturnType<typeof loadStore>>["watches"][num
     currentCurrency: watch.lastSnapshot?.currency,
     lastFetchedAt: watch.lastSnapshot?.fetchedAt,
     historyCount: watch.history?.length ?? 0,
+    importSource: watch.importSource,
     lowestSeenPrice: prices.length ? Math.min(...prices) : watch.lastSnapshot?.price,
     highestSeenPrice: prices.length ? Math.max(...prices) : watch.lastSnapshot?.price,
     signalCount: signals.length,
@@ -106,6 +107,13 @@ const IMPORTED_WATCH_SCHEMA = Type.Object({
   checkIntervalHint: Type.Optional(Type.String()),
   enabled: Type.Optional(Type.Boolean()),
   createdAt: Type.Optional(Type.String()),
+  importSource: Type.Optional(
+    Type.Object({
+      type: Type.Literal("url"),
+      url: Type.String(),
+      importedAt: Type.String(),
+    }),
+  ),
   lastSnapshot: Type.Optional(
     Type.Object({
       title: Type.Optional(Type.String()),
@@ -152,6 +160,11 @@ const WATCH_SELECTOR_SCHEMA = {
   group: Type.Optional(Type.String()),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
 } as const;
+
+function mergeImportedTags(existingTags: string[] | undefined, extraTags: string[] | undefined): string[] | undefined {
+  const merged = [...new Set([...(existingTags ?? []), ...(extraTags ?? [])].map((tag) => tag.trim().toLowerCase()).filter(Boolean))];
+  return merged.length ? merged : undefined;
+}
 
 function selectWatches(
   store: Awaited<ReturnType<typeof loadStore>>,
@@ -449,6 +462,95 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           ok: true,
           dryRun: params.dryRun === true,
           mode,
+          added: result.added,
+          updated: result.updated,
+          replaced: result.replaced,
+          matchedById: result.matchedById,
+          matchedByUrl: result.matchedByUrl,
+          importedCount: result.imported.length,
+          watches: result.imported.map(toWatchView),
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_watch_import_url",
+      label: "Deal Hunter",
+      description: "Fetch a remote JSON watchlist over HTTP(S), validate it, and import it with dry-run support.",
+      parameters: Type.Object({
+        url: Type.String(),
+        mode: Type.Optional(Type.Union([
+          Type.Literal("append"),
+          Type.Literal("upsert"),
+          Type.Literal("replace"),
+        ])),
+        dryRun: Type.Optional(Type.Boolean()),
+        group: Type.Optional(Type.String()),
+        addTags: Type.Optional(Type.Array(Type.String())),
+        enabled: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params) => {
+        const cfg = resolveDealConfig(api);
+        const mode = params.mode ?? "upsert";
+        const importUrl = validateTargetUrl(params.url, cfg).toString();
+        const fetchCfg = { ...cfg, fetcher: "local" as const };
+        const fetched = await cappedFetch(importUrl, fetchCfg);
+
+        if (fetched.meta.status >= 400) {
+          throw new Error(`deal-hunter: failed to fetch import URL "${importUrl}" (HTTP ${fetched.meta.status})`);
+        }
+
+        let payload: unknown;
+        try {
+          payload = JSON.parse(fetched.text);
+        } catch {
+          throw new Error(`deal-hunter: import URL "${importUrl}" did not return valid JSON`);
+        }
+
+        const importedAt = new Date().toISOString();
+        const remoteWatches = parseImportedWatchPayload(payload);
+        const normalizedWatches = remoteWatches.map((watch: ImportedWatchInput) => ({
+          ...watch,
+          url: canonicalizeWatchUrl(watch.url, cfg).toString(),
+          group: params.group ?? watch.group,
+          tags: mergeImportedTags(watch.tags, params.addTags),
+          enabled: params.enabled ?? watch.enabled,
+        }));
+
+        let result = {
+          added: 0,
+          updated: 0,
+          replaced: false,
+          imported: [] as Awaited<ReturnType<typeof loadStore>>["watches"],
+          matchedById: 0,
+          matchedByUrl: 0,
+        };
+
+        await withStore(async (store) => {
+          const target = params.dryRun === false ? store : structuredClone(store);
+          result = importWatches(target, normalizedWatches, mode, {
+            importSourceOverride: {
+              type: "url",
+              url: importUrl,
+              importedAt,
+            },
+          });
+          if (params.dryRun === false) {
+            await saveStore(storePath, target);
+          }
+        });
+
+        return jsonResult({
+          ok: true,
+          dryRun: params.dryRun !== false,
+          mode,
+          sourceUrl: importUrl,
+          sourceCount: remoteWatches.length,
+          fetchedAt: importedAt,
+          fetchMeta: fetched.meta,
           added: result.added,
           updated: result.updated,
           replaced: result.replaced,
@@ -937,6 +1039,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_dedupe",
               "deal_watch_export",
               "deal_watch_import",
+              "deal_watch_import_url",
               "deal_scan",
               "deal_history",
               "deal_alerts",
@@ -978,6 +1081,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_dedupe",
               "deal_watch_remove",
               "deal_watch_import",
+              "deal_watch_import_url",
               "deal_scan",
             ],
             examplePrompt:
@@ -992,6 +1096,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "Use deal_watch_export with includeHistory true so I can back up my active watches before I reorganize them.",
             importPrompt:
               "Prepare a deal_watch_import dry run in upsert mode so I can preview which watches would be added or updated.",
+            importUrlPrompt:
+              "Use deal_watch_import_url in dry-run mode to preview a shared remote watchlist before applying it.",
             modes: ["append", "upsert", "replace"],
           },
           troubleshooting: {

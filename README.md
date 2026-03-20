@@ -90,6 +90,7 @@ agents: {
           "deal_watch_dedupe",
           "deal_watch_export",
           "deal_watch_import",
+          "deal_watch_import_url",
           "deal_watch_remove",
           "deal_scan",
           "deal_fetch_url",
@@ -128,6 +129,7 @@ agents: {
 | `deal_watch_dedupe` | Find or resolve likely duplicate watches using canonicalized URLs. |
 | `deal_watch_export` | Export watches, optionally including snapshots and history, for backup or migration. |
 | `deal_watch_import` | Import watches with `append`, `upsert`, `replace`, and `dryRun` support. |
+| `deal_watch_import_url` | Fetch a remote JSON watchlist over HTTP(S), validate it, and import it with dry-run support. |
 | `deal_watch_remove` | Remove by `watchId`. |
 | `deal_scan` | Scan all enabled watches (or `watchIds`); `commit: false` dry-run. |
 | `deal_fetch_url` | One-off capped fetch + heuristic extraction. |
@@ -160,9 +162,10 @@ Recommended first-run workflow:
 8. `deal_scan` with `commit: true` to capture snapshots.
 9. `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
 10. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-11. `deal_watch_import` with `dryRun: true` before applying shared or migrated watchlists.
-12. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-13. `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+11. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+12. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+13. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+14. `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -221,6 +224,14 @@ The analytics tools add:
 - `replace` to swap the current watchlist with the imported one
 - `dryRun` to preview the result before writing
 
+`deal_watch_import_url` supports:
+
+- remote JSON arrays of watches
+- prior `deal_watch_export` payloads with a top-level `watches` array
+- `dryRun` by default so remote imports are previewed before writing
+- per-run `group`, `addTags`, and `enabled` overrides
+- recorded `importSource` metadata so shared-list provenance stays visible on imported watches
+
 Watch management now also includes:
 
 - URL canonicalization that strips common tracking params before storage and dedupe checks
@@ -241,6 +252,7 @@ Network guardrails:
 - Watch metadata, the latest snapshot, and committed history are stored in the configured JSON store path.
 - Exported watchlists may include URLs, thresholds, snapshots, and history if you choose to include them.
 - `deal_watch_import` supports `dryRun` so you can preview changes before writing them to disk.
+- `deal_watch_import_url` records the source URL and import timestamp on affected watches.
 - `allowedHosts` is the best way to keep the plugin constrained to the domains you actually want it to touch.
 
 ## Troubleshooting
