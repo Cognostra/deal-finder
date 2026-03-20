@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { addWatch, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
+import { addWatch, appendWatchHistory, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
 
 let tempDirs: string[] = [];
 
@@ -105,5 +105,95 @@ describe("store", () => {
       missingIds: ["missing-watch"],
     });
     expect(store.watches.every((watch) => watch.enabled)).toBe(true);
+  });
+
+  it("records only meaningful committed history states", () => {
+    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const watch = addWatch(store, { url: "http://shop.test/a" });
+
+    const firstChanged = appendWatchHistory(watch, {
+      watchId: watch.id,
+      url: watch.url,
+      fetchSource: "node_http",
+      fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+      ok: true,
+      changed: true,
+      changeType: "first_seen",
+      changeReasons: ["Initial snapshot captured for this watch."],
+      alertSeverity: "low",
+      alertScore: 20,
+      extractionConfidence: { score: 90, level: "high", reasons: ["ok"] },
+      summaryLine: "Widget: 20.00 USD; first snapshot",
+      timingMs: { fetch: 1, parse: 1, total: 2 },
+      after: {
+        fetchedAt: "2026-03-19T00:00:00.000Z",
+        price: 20,
+        currency: "USD",
+        title: "Widget",
+        canonicalTitle: "widget",
+        contentHash: "hash-1",
+      },
+      alerts: [],
+    });
+
+    const duplicateState = appendWatchHistory(watch, {
+      watchId: watch.id,
+      url: watch.url,
+      fetchSource: "node_http",
+      fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+      ok: true,
+      changed: false,
+      changeType: "unchanged",
+      changeReasons: ["No material change detected."],
+      alertSeverity: "none",
+      alertScore: 0,
+      extractionConfidence: { score: 90, level: "high", reasons: ["ok"] },
+      summaryLine: "Widget: 20.00 USD; no material change",
+      timingMs: { fetch: 1, parse: 1, total: 2 },
+      after: {
+        fetchedAt: "2026-03-20T00:00:00.000Z",
+        price: 20,
+        currency: "USD",
+        title: "Widget",
+        canonicalTitle: "widget",
+        contentHash: "hash-1",
+      },
+      alerts: [],
+    });
+
+    const changedAgain = appendWatchHistory(watch, {
+      watchId: watch.id,
+      url: watch.url,
+      fetchSource: "node_http",
+      fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+      ok: true,
+      changed: true,
+      changeType: "price_drop",
+      changeReasons: ["Price dropped."],
+      alertSeverity: "high",
+      alertScore: 90,
+      extractionConfidence: { score: 90, level: "high", reasons: ["ok"] },
+      summaryLine: "Widget: 15.00 USD; price dropped",
+      timingMs: { fetch: 1, parse: 1, total: 2 },
+      after: {
+        fetchedAt: "2026-03-21T00:00:00.000Z",
+        price: 15,
+        currency: "USD",
+        title: "Widget",
+        canonicalTitle: "widget",
+        contentHash: "hash-2",
+      },
+      alerts: ["price_drop_25.0_percent"],
+    });
+
+    expect(firstChanged).toBe(true);
+    expect(duplicateState).toBe(false);
+    expect(changedAgain).toBe(true);
+    expect(watch.history).toHaveLength(2);
+    expect(watch.history?.[1]).toMatchObject({
+      price: 15,
+      changeType: "price_drop",
+      alertSeverity: "high",
+    });
   });
 });

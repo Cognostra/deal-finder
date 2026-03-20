@@ -26,6 +26,19 @@ export type WatchSnapshot = {
   rawSnippet?: string;
 };
 
+export type WatchHistoryEntry = {
+  fetchedAt: string;
+  price?: number;
+  currency?: string;
+  title?: string;
+  canonicalTitle?: string;
+  contentHash?: string;
+  changeType?: ScanChangeType;
+  alertSeverity?: AlertSeverity;
+  alerts?: string[];
+  summaryLine?: string;
+};
+
 export type Watch = {
   id: string;
   url: string;
@@ -37,6 +50,7 @@ export type Watch = {
   enabled: boolean;
   createdAt: string;
   lastSnapshot?: WatchSnapshot;
+  history?: WatchHistoryEntry[];
 };
 
 export type StoreFile = {

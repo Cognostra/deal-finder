@@ -16,7 +16,7 @@ import { cappedFetch } from "./fetch.js";
 import { extractListing, hashSnippet } from "./heuristics.js";
 import { mapPool } from "./concurrency.js";
 import { PerHostRateLimiter } from "./host-limiter.js";
-import { saveStore } from "./store.js";
+import { appendWatchHistory, saveStore } from "./store.js";
 import { validateTargetUrl } from "./url-policy.js";
 
 function buildAlerts(w: Watch, prev: WatchSnapshot | undefined, next: WatchSnapshot): string[] {
@@ -550,7 +550,10 @@ function applyCommit(store: StoreFile, results: ScanResultItem[]) {
   for (const r of results) {
     if (!r.ok || !r.after) continue;
     const w = store.watches.find((x) => x.id === r.watchId);
-    if (w) w.lastSnapshot = r.after;
+    if (w) {
+      appendWatchHistory(w, r);
+      w.lastSnapshot = r.after;
+    }
   }
 }
 
@@ -593,6 +596,7 @@ export function mergeCommittedScanResults(
       continue;
     }
 
+    appendWatchHistory(currentWatch, result);
     currentWatch.lastSnapshot = result.after;
     updated += 1;
   }

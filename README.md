@@ -85,7 +85,11 @@ agents: {
           "deal_evaluate_text",
           "deal_help",
           "deal_report",
-          "deal_health"
+          "deal_health",
+          "deal_history",
+          "deal_alerts",
+          "deal_doctor",
+          "deal_sample_setup"
         ]
       }
     }
@@ -109,17 +113,23 @@ agents: {
 | `deal_help` | Show install, tool, cron, and safety guidance from inside OpenClaw. |
 | `deal_report` | Summarize the current watchlist, snapshots, and signal-heavy watches. |
 | `deal_health` | Show configuration, storage, safety posture, and operational recommendations. |
+| `deal_history` | Show per-watch price history, recent deltas, and lowest/highest seen prices. |
+| `deal_alerts` | Rank current threshold, keyword, and recent high-severity watch signals. |
+| `deal_doctor` | Run a lightweight sanity check for config and watchlist setup. |
+| `deal_sample_setup` | Show install, config, allowlist, prompt, and cron examples. |
 
 Side-effecting tools are registered as **optional** (except `deal_watch_list` / `deal_evaluate_text`) so you opt in via `tools.allow`.
 
 Recommended first-run workflow:
 
 1. `deal_help` for install/tool guidance and sample prompts.
-2. `deal_watch_add` to create the first watch.
-3. `deal_watch_search` to inspect watches and current threshold/keyword signals.
-4. `deal_scan` with `commit: true` to capture snapshots.
-5. `deal_watch_update` or `deal_watch_set_enabled` as the watchlist grows.
-6. `deal_report` and `deal_health` to audit the current state of the plugin.
+2. `deal_sample_setup` for ready-to-copy install/config/cron examples.
+3. `deal_watch_add` to create the first watch.
+4. `deal_watch_search` to inspect watches and current threshold/keyword signals.
+5. `deal_scan` with `commit: true` to capture snapshots.
+6. `deal_history` and `deal_alerts` to inspect recent movement and ranked active signals.
+7. `deal_watch_update` or `deal_watch_set_enabled` as the watchlist grows.
+8. `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -131,6 +141,13 @@ Recommended first-run workflow:
 - top-level `summary` and `rankedAlerts`
 
 Snapshot and extraction metadata also include `canonicalTitle`, which normalizes cosmetic title differences for cleaner watch metadata and more stable agent summaries.
+
+Committed scans now build bounded per-watch history so the plugin can report:
+
+- lowest seen price
+- highest seen price
+- latest price delta
+- recent alert-bearing changes
 
 Network guardrails:
 

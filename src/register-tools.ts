@@ -5,7 +5,14 @@ import { resolveDealConfig } from "./config.js";
 import { mergeCommittedScanResults, runScan } from "./lib/engine.js";
 import { cappedFetch } from "./lib/fetch.js";
 import { evaluateListingText, extractListing } from "./lib/heuristics.js";
-import { buildHealthSummary, buildStoreReport } from "./lib/report.js";
+import {
+  buildAlertsSummary,
+  buildDoctorSummary,
+  buildHealthSummary,
+  buildHistorySummary,
+  buildSampleSetup,
+  buildStoreReport,
+} from "./lib/report.js";
 import { addWatch, getWatch, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
 import { buildWatchSignals, searchWatches } from "./lib/watch-view.js";
 import { validateTargetUrl } from "./lib/url-policy.js";
@@ -64,11 +71,17 @@ function buildScanSummary(results: Awaited<ReturnType<typeof runScan>>) {
 
 function toWatchView(watch: Awaited<ReturnType<typeof loadStore>>["watches"][number]) {
   const signals = buildWatchSignals(watch);
+  const prices = (watch.history ?? [])
+    .map((entry) => entry.price)
+    .filter((price): price is number => price != null);
   return {
     ...watch,
     currentPrice: watch.lastSnapshot?.price,
     currentCurrency: watch.lastSnapshot?.currency,
     lastFetchedAt: watch.lastSnapshot?.fetchedAt,
+    historyCount: watch.history?.length ?? 0,
+    lowestSeenPrice: prices.length ? Math.min(...prices) : watch.lastSnapshot?.price,
+    highestSeenPrice: prices.length ? Math.max(...prices) : watch.lastSnapshot?.price,
     signalCount: signals.length,
     signals,
   };
@@ -435,6 +448,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_set_enabled",
               "deal_watch_search",
               "deal_scan",
+              "deal_history",
+              "deal_alerts",
             ],
             firstPrompt:
               "Use deal_watch_list and deal_watch_search to show me my current watches and call out any threshold or keyword signals.",
@@ -445,7 +460,15 @@ export function registerDealTools(api: OpenClawPluginApi): void {
             note: "GitHub is the source/support repo. Native OpenClaw installs should use the npm package spec.",
           },
           tools: {
-            readOnlyTools: ["deal_watch_list", "deal_watch_search", "deal_fetch_url", "deal_evaluate_text", "deal_help"],
+            readOnlyTools: [
+              "deal_watch_list",
+              "deal_watch_search",
+              "deal_fetch_url",
+              "deal_evaluate_text",
+              "deal_help",
+              "deal_history",
+              "deal_alerts",
+            ],
             writeTools: ["deal_watch_add", "deal_watch_update", "deal_watch_set_enabled", "deal_watch_remove", "deal_scan"],
             examplePrompt:
               "Use deal_watch_search to find disabled watches, then use deal_watch_set_enabled to re-enable the ones I still care about.",
@@ -501,6 +524,95 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         const cfg = resolveDealConfig(api);
         const store = await loadStore(storePath);
         return jsonResult(buildHealthSummary(store, cfg, storePath));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_doctor",
+      label: "Deal Hunter",
+      description: "Run a lightweight configuration and watchlist sanity check.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const cfg = resolveDealConfig(api);
+        const store = await loadStore(storePath);
+        return jsonResult(buildDoctorSummary(store, cfg, storePath));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_sample_setup",
+      label: "Deal Hunter",
+      description: "Show example install, config, allowlist, prompts, and cron setup for Deal Hunter.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        return jsonResult(buildSampleSetup());
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_history",
+      label: "Deal Hunter",
+      description: "Show stored price history and recent changes for one watch or summarize history across watches.",
+      parameters: Type.Object({
+        watchId: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const limit = params.limit ?? 20;
+
+        if (params.watchId) {
+          const watch = getWatch(store, params.watchId);
+          if (!watch) {
+            return {
+              content: [{ type: "text", text: JSON.stringify({ ok: false, error: "watch not found" }, null, 2) }],
+              details: { ok: false },
+            };
+          }
+
+          return jsonResult(buildHistorySummary(watch, limit));
+        }
+
+        const watches = store.watches
+          .filter((watch) => Boolean(watch.history?.length))
+          .map((watch) => buildHistorySummary(watch, Math.min(limit, 5)))
+          .sort((a, b) => (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? ""))
+          .slice(0, limit);
+
+        return jsonResult({
+          count: watches.length,
+          watches,
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_alerts",
+      label: "Deal Hunter",
+      description: "Show the hottest current threshold, keyword, and recent change signals across the watchlist.",
+      parameters: Type.Object({
+        severity: Type.Optional(Type.Union([
+          Type.Literal("low"),
+          Type.Literal("medium"),
+          Type.Literal("high"),
+        ])),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        return jsonResult(buildAlertsSummary(store, params.severity ?? "low", params.limit ?? 20));
       },
     },
     { optional: false },

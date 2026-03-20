@@ -371,4 +371,46 @@ describe("mergeCommittedScanResults", () => {
     });
     expect(store.watches[0]?.lastSnapshot).toBeUndefined();
   });
+
+  it("persists history when a committed result materially changes", () => {
+    const store = makeStore(undefined);
+    const summary = mergeCommittedScanResults(
+      store,
+      [
+        {
+          watchId: "watch-1",
+          url: "http://shop.test/item",
+          fetchSource: "node_http",
+          fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+          ok: true,
+          changed: true,
+          changeType: "first_seen",
+          changeReasons: ["Initial snapshot captured for this watch."],
+          alertSeverity: "low",
+          alertScore: 20,
+          extractionConfidence: { score: 90, level: "high", reasons: ["ok"] },
+          summaryLine: "Widget: 10.00 USD; first snapshot",
+          timingMs: { fetch: 1, parse: 0, total: 1 },
+          after: {
+            fetchedAt: "2026-03-19T00:00:00.000Z",
+            price: 10,
+            currency: "USD",
+            title: "Widget",
+            canonicalTitle: "widget",
+            contentHash: "hash-1",
+          },
+          alerts: [],
+        },
+      ],
+      makeConfig(),
+    );
+
+    expect(summary.updated).toBe(1);
+    expect(store.watches[0]?.lastSnapshot?.price).toBe(10);
+    expect(store.watches[0]?.history).toHaveLength(1);
+    expect(store.watches[0]?.history?.[0]).toMatchObject({
+      price: 10,
+      changeType: "first_seen",
+    });
+  });
 });

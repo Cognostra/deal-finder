@@ -1,7 +1,9 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { StoreFile, Watch } from "../types.js";
+import type { ScanResultItem, StoreFile, Watch, WatchHistoryEntry } from "../types.js";
+
+const MAX_HISTORY_ENTRIES = 60;
 
 export async function loadStore(path: string): Promise<StoreFile> {
   try {
@@ -51,6 +53,48 @@ export function removeWatch(store: StoreFile, id: string): boolean {
 
 export function getWatch(store: StoreFile, id: string): Watch | undefined {
   return store.watches.find((w) => w.id === id);
+}
+
+function toHistoryEntry(result: ScanResultItem): WatchHistoryEntry | undefined {
+  if (!result.ok || !result.after || result.changeType === "not_modified") {
+    return undefined;
+  }
+
+  return {
+    fetchedAt: result.after.fetchedAt,
+    price: result.after.price,
+    currency: result.after.currency,
+    title: result.after.title,
+    canonicalTitle: result.after.canonicalTitle,
+    contentHash: result.after.contentHash,
+    changeType: result.changeType,
+    alertSeverity: result.alertSeverity,
+    alerts: result.alerts.slice(0, 10),
+    summaryLine: result.summaryLine,
+  };
+}
+
+function sameHistoryState(a: WatchHistoryEntry, b: WatchHistoryEntry): boolean {
+  return (
+    a.price === b.price &&
+    a.currency === b.currency &&
+    a.canonicalTitle === b.canonicalTitle &&
+    a.contentHash === b.contentHash
+  );
+}
+
+export function appendWatchHistory(watch: Watch, result: ScanResultItem): boolean {
+  const entry = toHistoryEntry(result);
+  if (!entry) return false;
+
+  const history = watch.history ?? [];
+  const lastEntry = history[history.length - 1];
+  if (lastEntry && sameHistoryState(lastEntry, entry)) {
+    return false;
+  }
+
+  watch.history = history.concat(entry).slice(-MAX_HISTORY_ENTRIES);
+  return true;
 }
 
 export type WatchUpdatePatch = {
