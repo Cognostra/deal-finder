@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { addWatch, appendWatchHistory, bulkUpdateWatches, importWatches, loadStore, parseImportedWatchPayload, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
+import { addSavedView, addWatch, appendWatchHistory, bulkUpdateWatches, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./store.js";
 
 let tempDirs: string[] = [];
 
@@ -20,7 +20,7 @@ afterEach(async () => {
 describe("store", () => {
   it("returns an empty store when the file is missing", async () => {
     const path = await makeTempStorePath();
-    await expect(loadStore(path)).resolves.toEqual({ version: 1, watches: [] });
+    await expect(loadStore(path)).resolves.toEqual({ version: 2, watches: [], savedViews: [] });
   });
 
   it("persists add/remove operations", async () => {
@@ -41,13 +41,23 @@ describe("store", () => {
     expect(removeWatch(reloaded, added.id)).toBe(true);
 
     await saveStore(path, reloaded);
-    await expect(loadStore(path)).resolves.toEqual({ version: 1, watches: [] });
+    await expect(loadStore(path)).resolves.toEqual({ version: 2, watches: [], savedViews: [] });
   });
 
   it("falls back to an empty store for invalid shapes", async () => {
     const path = await makeTempStorePath();
     await writeFile(path, JSON.stringify({ version: 2, nope: true }), "utf8");
-    await expect(loadStore(path)).resolves.toEqual({ version: 1, watches: [] });
+    await expect(loadStore(path)).resolves.toEqual({ version: 2, watches: [], savedViews: [] });
+  });
+
+  it("migrates a version 1 watch-only store into version 2", async () => {
+    const path = await makeTempStorePath();
+    await writeFile(path, JSON.stringify({ version: 1, watches: [{ id: "watch-1", url: "http://shop.test/item", enabled: true, createdAt: "2026-03-20T00:00:00.000Z" }] }), "utf8");
+    await expect(loadStore(path)).resolves.toEqual({
+      version: 2,
+      watches: [{ id: "watch-1", url: "http://shop.test/item", enabled: true, createdAt: "2026-03-20T00:00:00.000Z" }],
+      savedViews: [],
+    });
   });
 
   it("surfaces malformed JSON so corruption is visible", async () => {
@@ -58,14 +68,14 @@ describe("store", () => {
 
   it("does not leave temp files behind after save", async () => {
     const path = await makeTempStorePath();
-    await saveStore(path, { version: 1, watches: [] });
+    await saveStore(path, { version: 2, watches: [], savedViews: [] });
 
     const files = await readdir(dirname(path));
     expect(files).toEqual(["store.json"]);
   });
 
   it("updates mutable watch fields and can clear optional metadata", async () => {
-    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
     const watch = addWatch(store, {
       url: "http://shop.test/item",
       label: "Demo",
@@ -98,7 +108,7 @@ describe("store", () => {
   });
 
   it("bulk-enables and reports missing watch ids", async () => {
-    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
     const first = addWatch(store, { url: "http://shop.test/a", enabled: false });
     const second = addWatch(store, { url: "http://shop.test/b", enabled: false });
 
@@ -112,7 +122,7 @@ describe("store", () => {
   });
 
   it("bulk-updates tags and group metadata", () => {
-    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
     const first = addWatch(store, { url: "http://shop.test/a", tags: ["alpha"], group: "Old" });
     const second = addWatch(store, { url: "http://shop.test/b" });
 
@@ -131,7 +141,7 @@ describe("store", () => {
   });
 
   it("records only meaningful committed history states", () => {
-    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
     const watch = addWatch(store, { url: "http://shop.test/a" });
 
     const firstChanged = appendWatchHistory(watch, {
@@ -221,7 +231,7 @@ describe("store", () => {
   });
 
   it("imports watches in append mode without overwriting existing entries", () => {
-    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
     const existing = addWatch(store, { url: "http://shop.test/a", label: "Existing" });
 
     const result = importWatches(
@@ -248,7 +258,7 @@ describe("store", () => {
   });
 
   it("imports watches in upsert mode by id or url", () => {
-    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
     const first = addWatch(store, { url: "http://shop.test/a", label: "Alpha" });
     const second = addWatch(store, { url: "http://shop.test/b", label: "Bravo" });
 
@@ -292,7 +302,7 @@ describe("store", () => {
   });
 
   it("imports watches in replace mode by swapping the watchlist", () => {
-    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
     addWatch(store, { url: "http://shop.test/a", label: "Old" });
 
     const result = importWatches(
@@ -322,7 +332,7 @@ describe("store", () => {
   });
 
   it("records remote import source metadata when supplied", () => {
-    const store: { version: 1; watches: import("../types.js").Watch[] } = { version: 1, watches: [] };
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
 
     importWatches(
       store,
@@ -420,5 +430,26 @@ describe("store", () => {
   it("rejects malformed remote import payloads", () => {
     expect(() => parseImportedWatchPayload({ watches: [{ label: "Missing URL" }] })).toThrow(/missing a string url/i);
     expect(() => parseImportedWatchPayload({ nope: true })).toThrow(/non-empty "watches" array/i);
+  });
+
+  it("stores, lists, and removes saved views", () => {
+    const store: import("../types.js").StoreFile = { version: 2, watches: [], savedViews: [] };
+
+    const saved = addSavedView(store, {
+      name: "GPU alerts",
+      description: "All GPU watches with signals",
+      selector: { tag: "gpu", hasSignals: true, sortBy: "price", descending: false, limit: 25 },
+    });
+
+    expect(saved.name).toBe("GPU alerts");
+    expect(listSavedViews(store)).toHaveLength(1);
+    expect(listSavedViews(store)[0]).toMatchObject({
+      id: saved.id,
+      name: "GPU alerts",
+      selector: { tag: "gpu", hasSignals: true, sortBy: "price", descending: false, limit: 25 },
+    });
+
+    expect(removeSavedView(store, saved.id)).toBe(true);
+    expect(listSavedViews(store)).toEqual([]);
   });
 });

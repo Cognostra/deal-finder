@@ -19,7 +19,7 @@ import {
   buildWatchInsights,
 } from "./lib/report.js";
 import type { ImportedWatchInput } from "./lib/store.js";
-import { addWatch, bulkUpdateWatches, getWatch, importWatches, loadStore, parseImportedWatchPayload, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
+import { addSavedView, addWatch, bulkUpdateWatches, getSavedView, getWatch, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
 import { buildWatchSignals, searchWatches } from "./lib/watch-view.js";
 import { canonicalizeWatchUrl, validateTargetUrl } from "./lib/url-policy.js";
 
@@ -158,6 +158,12 @@ const WATCH_SELECTOR_SCHEMA = {
   hasSignals: Type.Optional(Type.Boolean()),
   tag: Type.Optional(Type.String()),
   group: Type.Optional(Type.String()),
+  sortBy: Type.Optional(Type.Union([
+    Type.Literal("createdAt"),
+    Type.Literal("label"),
+    Type.Literal("price"),
+  ])),
+  descending: Type.Optional(Type.Boolean()),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
 } as const;
 
@@ -176,6 +182,8 @@ function selectWatches(
     hasSignals?: boolean;
     tag?: string;
     group?: string;
+    sortBy?: "createdAt" | "label" | "price";
+    descending?: boolean;
     limit?: number;
   },
 ) {
@@ -188,8 +196,20 @@ function selectWatches(
     hasSignals: selector.hasSignals,
     tag: selector.tag,
     group: selector.group,
+    sortBy: selector.sortBy,
+    descending: selector.descending,
     limit: selector.limit,
   });
+}
+
+function toSavedViewSummary(store: Awaited<ReturnType<typeof loadStore>>, view: ReturnType<typeof listSavedViews>[number]) {
+  const matches = searchWatches(store.watches, view.selector);
+  const watchIds = matches.map((watch) => watch.id).slice(0, 20);
+  return {
+    ...view,
+    matchCount: matches.length,
+    previewWatchIds: watchIds,
+  };
 }
 
 export function registerDealTools(api: OpenClawPluginApi): void {
@@ -603,6 +623,113 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       },
     },
     { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_saved_view_list",
+      label: "Deal Hunter",
+      description: "List saved watch search views with selector details and current match counts.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const store = await loadStore(storePath);
+        return jsonResult({
+          count: store.savedViews.length,
+          savedViews: listSavedViews(store).map((view) => toSavedViewSummary(store, view)),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_saved_view_create",
+      label: "Deal Hunter",
+      description: "Persist a reusable watch search/filter view for larger watchlists.",
+      parameters: Type.Object({
+        name: Type.String(),
+        description: Type.Optional(Type.String()),
+        selector: Type.Object({
+          query: WATCH_SELECTOR_SCHEMA.query,
+          enabled: WATCH_SELECTOR_SCHEMA.enabled,
+          hasSnapshot: WATCH_SELECTOR_SCHEMA.hasSnapshot,
+          hasSignals: WATCH_SELECTOR_SCHEMA.hasSignals,
+          tag: WATCH_SELECTOR_SCHEMA.tag,
+          group: WATCH_SELECTOR_SCHEMA.group,
+          sortBy: WATCH_SELECTOR_SCHEMA.sortBy,
+          descending: WATCH_SELECTOR_SCHEMA.descending,
+          limit: WATCH_SELECTOR_SCHEMA.limit,
+        }),
+      }),
+      execute: async (_id, params) => {
+        let saved;
+        await withStore(async (store) => {
+          if (store.savedViews.some((view) => view.name.toLowerCase() === params.name.trim().toLowerCase())) {
+            throw new Error(`deal-hunter: a saved view named "${params.name}" already exists`);
+          }
+          saved = addSavedView(store, {
+            name: params.name,
+            description: params.description,
+            selector: params.selector,
+          });
+          await saveStore(storePath, store);
+        });
+        const store = await loadStore(storePath);
+        return jsonResult({
+          ok: true,
+          savedView: toSavedViewSummary(store, saved!),
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_saved_view_run",
+      label: "Deal Hunter",
+      description: "Run a previously saved view and return the current matching watches.",
+      parameters: Type.Object({
+        savedViewId: Type.String(),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const savedView = getSavedView(store, params.savedViewId);
+        if (!savedView) {
+          throw new Error(`deal-hunter: unknown saved view "${params.savedViewId}"`);
+        }
+        const watches = searchWatches(store.watches, savedView.selector).map(toWatchView);
+        return jsonResult({
+          savedView: toSavedViewSummary(store, savedView),
+          watches,
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_saved_view_delete",
+      label: "Deal Hunter",
+      description: "Delete a saved watch search view.",
+      parameters: Type.Object({
+        savedViewId: Type.String(),
+      }),
+      execute: async (_id, params) => {
+        let removed = false;
+        await withStore(async (store) => {
+          removed = removeSavedView(store, params.savedViewId);
+          if (!removed) {
+            throw new Error(`deal-hunter: unknown saved view "${params.savedViewId}"`);
+          }
+          await saveStore(storePath, store);
+        });
+        return jsonResult({ ok: true, removed });
+      },
+    },
+    { optional: true },
   );
 
   api.registerTool(
@@ -1034,6 +1161,10 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_update",
               "deal_watch_set_enabled",
               "deal_watch_search",
+              "deal_saved_view_list",
+              "deal_saved_view_create",
+              "deal_saved_view_run",
+              "deal_saved_view_delete",
               "deal_watch_bulk_update",
               "deal_watch_tag",
               "deal_watch_dedupe",
@@ -1060,6 +1191,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
             readOnlyTools: [
               "deal_watch_list",
               "deal_watch_search",
+              "deal_saved_view_list",
+              "deal_saved_view_run",
               "deal_watch_export",
               "deal_fetch_url",
               "deal_extraction_debug",
@@ -1076,6 +1209,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_add",
               "deal_watch_update",
               "deal_watch_set_enabled",
+              "deal_saved_view_create",
+              "deal_saved_view_delete",
               "deal_watch_bulk_update",
               "deal_watch_tag",
               "deal_watch_dedupe",
@@ -1085,7 +1220,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_scan",
             ],
             examplePrompt:
-              "Use deal_top_drops and deal_watch_insights to explain which watch looks like the strongest real deal right now, then use deal_watch_search to find disabled GPU watches I might want to re-enable.",
+              "Use deal_saved_view_run for my GPU alerts view, then use deal_top_drops and deal_watch_insights to explain which watch looks like the strongest real deal right now.",
           },
           cron: {
             example:

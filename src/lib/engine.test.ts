@@ -41,7 +41,8 @@ function makeApi() {
 
 function makeStore(snapshot?: WatchSnapshot, overrides: Partial<StoreFile["watches"][number]> = {}): StoreFile {
   return {
-    version: 1,
+    version: 2,
+    savedViews: [],
     watches: [
       {
         id: "watch-1",

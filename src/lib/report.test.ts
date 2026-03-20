@@ -16,7 +16,8 @@ import {
 } from "./report.js";
 
 const store: StoreFile = {
-  version: 1,
+  version: 2,
+  savedViews: [],
   watches: [
     {
       id: "watch-1",
@@ -136,6 +137,7 @@ describe("buildStoreReport", () => {
     const report = buildStoreReport(store);
     expect(report).toMatchObject({
       total: 3,
+      savedViewCount: 0,
       enabled: 2,
       disabled: 1,
       withSnapshots: 2,
@@ -184,6 +186,7 @@ describe("buildSampleSetup", () => {
     expect(sample.allowlist).toContain("deal_history");
     expect(sample.allowlist).toContain("deal_watch_import");
     expect(sample.allowlist).toContain("deal_watch_import_url");
+    expect(sample.allowlist).toContain("deal_saved_view_create");
     expect(sample.examplePrompts.length).toBeGreaterThan(0);
   });
 });
@@ -194,6 +197,7 @@ describe("buildQuickstartGuide", () => {
     expect(guide.installCommand).toContain("openclaw plugins install");
     expect(guide.firstRunChecklist.length).toBeGreaterThan(3);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_watch_import_url"))).toBe(true);
+    expect(guide.firstRunChecklist.some((item) => item.includes("deal_saved_view_create"))).toBe(true);
     expect(guide.privacyAndSafety.some((item) => item.includes("allowedHosts"))).toBe(true);
     expect(guide.troubleshooting.some((item) => item.includes("deal_doctor"))).toBe(true);
   });

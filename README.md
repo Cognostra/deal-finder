@@ -85,6 +85,10 @@ agents: {
           "deal_watch_update",
           "deal_watch_set_enabled",
           "deal_watch_search",
+          "deal_saved_view_list",
+          "deal_saved_view_create",
+          "deal_saved_view_run",
+          "deal_saved_view_delete",
           "deal_watch_bulk_update",
           "deal_watch_tag",
           "deal_watch_dedupe",
@@ -124,6 +128,10 @@ agents: {
 | `deal_watch_update` | Update a watch’s URL, thresholds, label, keywords, or enabled state. |
 | `deal_watch_set_enabled` | Enable or disable one or more watches in bulk. |
 | `deal_watch_search` | Search/filter/sort watches by query, enabled state, snapshot state, signals, tag, group, or price. |
+| `deal_saved_view_list` | List saved watch search views and their current match counts. |
+| `deal_saved_view_create` | Save a reusable watch search/filter view for larger watchlists. |
+| `deal_saved_view_run` | Run a saved view and return the current matching watches. |
+| `deal_saved_view_delete` | Delete a saved watch search view. |
 | `deal_watch_bulk_update` | Bulk-update watches selected by ids or search filters; dry-run by default. |
 | `deal_watch_tag` | Add, remove, or replace tags and assign groups across matching watches. |
 | `deal_watch_dedupe` | Find or resolve likely duplicate watches using canonicalized URLs. |
@@ -157,15 +165,16 @@ Recommended first-run workflow:
 3. `deal_sample_setup` for ready-to-copy install/config/cron examples.
 4. `deal_watch_add` to create the first watch.
 5. `deal_watch_search` to inspect watches and current threshold/keyword signals.
-6. `deal_watch_tag` or `deal_watch_bulk_update` to organize watches into tags and groups as the list grows.
-7. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
-8. `deal_scan` with `commit: true` to capture snapshots.
-9. `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
-10. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-11. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
-12. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
-13. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-14. `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+6. `deal_saved_view_create` once you have a search you expect to reuse, like "GPU alerts" or "disabled watches with snapshots".
+7. `deal_watch_tag` or `deal_watch_bulk_update` to organize watches into tags and groups as the list grows.
+8. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
+9. `deal_scan` with `commit: true` to capture snapshots.
+10. `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
+11. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+12. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+13. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+14. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+15. `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -236,6 +245,7 @@ Watch management now also includes:
 
 - URL canonicalization that strips common tracking params before storage and dedupe checks
 - optional `group` and `tags` metadata for organizing larger watchlists
+- saved views for repeat watchlist searches and imported-list navigation
 - bulk update and tag tools that are dry-run-first for safer agent workflows
 - dedupe reporting and duplicate resolution based on canonicalized URLs
 
@@ -250,6 +260,7 @@ Network guardrails:
 ## Privacy & data
 
 - Watch metadata, the latest snapshot, and committed history are stored in the configured JSON store path.
+- Saved watch-search views are stored alongside the watchlist so larger setups keep their navigation shortcuts.
 - Exported watchlists may include URLs, thresholds, snapshots, and history if you choose to include them.
 - `deal_watch_import` supports `dryRun` so you can preview changes before writing them to disk.
 - `deal_watch_import_url` records the source URL and import timestamp on affected watches.

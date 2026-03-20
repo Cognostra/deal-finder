@@ -234,6 +234,7 @@ function buildNoiseAssessment(
 
 export function buildStoreReport(store: StoreFile): {
   total: number;
+  savedViewCount: number;
   enabled: number;
   disabled: number;
   withSnapshots: number;
@@ -373,6 +374,7 @@ export function buildStoreReport(store: StoreFile): {
 
   return {
     total: watches.length,
+    savedViewCount: store.savedViews.length,
     enabled: watches.filter((watch) => watch.enabled).length,
     disabled: watches.filter((watch) => !watch.enabled).length,
     withSnapshots: watches.filter((watch) => Boolean(watch.lastSnapshot)).length,
@@ -516,6 +518,10 @@ export function buildSampleSetup() {
       "deal_watch_update",
       "deal_watch_set_enabled",
       "deal_watch_search",
+      "deal_saved_view_list",
+      "deal_saved_view_create",
+      "deal_saved_view_run",
+      "deal_saved_view_delete",
       "deal_watch_bulk_update",
       "deal_watch_tag",
       "deal_watch_dedupe",
@@ -545,6 +551,7 @@ export function buildSampleSetup() {
       "Use deal_quickstart and give me the safest first-run checklist for this plugin.",
       "Use deal_watch_add to add a watch for https://example.com/product and then use deal_scan with commit true.",
       "Use deal_watch_search to show me disabled watches and any watches currently showing threshold or keyword signals.",
+      "Use deal_saved_view_create to save a view for my GPU watches with active signals, then run it.",
       "Use deal_watch_tag to tag my GPU watches and group them under pc-build.",
       "Use deal_watch_dedupe in dry-run mode and show me any likely duplicate watches before I clean up the list.",
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
@@ -565,6 +572,7 @@ export function buildQuickstartGuide() {
       "Enable the plugin and allow the tools you want your agent to use.",
       "Set allowedHosts for the retailer domains you trust most.",
       "Use deal_watch_add to create the first watch.",
+      "Use deal_saved_view_create for repeat searches once your watchlist grows beyond a few items.",
       "Use deal_watch_tag or deal_watch_bulk_update once you have enough watches to organize by tag or group.",
       "Run deal_scan with commit true to capture the first snapshot.",
       "Use deal_alerts, deal_trends, and deal_report to inspect what changed.",

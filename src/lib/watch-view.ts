@@ -1,16 +1,6 @@
-import type { Watch } from "../types.js";
+import type { Watch, WatchSearchSortBy, WatchSelector } from "../types.js";
 
-export type WatchSearchOptions = {
-  query?: string;
-  enabled?: boolean;
-  hasSnapshot?: boolean;
-  hasSignals?: boolean;
-  tag?: string;
-  group?: string;
-  sortBy?: "createdAt" | "label" | "price";
-  descending?: boolean;
-  limit?: number;
-};
+export type WatchSearchOptions = WatchSelector;
 
 export function buildWatchSignals(watch: Watch): string[] {
   const signals: string[] = [];
@@ -37,7 +27,7 @@ export function searchWatches(watches: Watch[], options: WatchSearchOptions): Wa
   const query = options.query?.trim().toLowerCase();
   const tag = options.tag?.trim().toLowerCase();
   const group = options.group?.trim().toLowerCase();
-  const sortBy = options.sortBy ?? "createdAt";
+  const sortBy: WatchSearchSortBy = options.sortBy ?? "createdAt";
   const descending = options.descending ?? true;
 
   const filtered = watches.filter((watch) => {

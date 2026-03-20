@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ScanResultItem, StoreFile, Watch, WatchHistoryEntry, WatchImportSource } from "../types.js";
+import type { SavedWatchView, ScanResultItem, StoreFile, Watch, WatchHistoryEntry, WatchImportSource, WatchSelector } from "../types.js";
 
 const MAX_HISTORY_ENTRIES = 60;
 
@@ -16,17 +16,78 @@ function normalizeGroup(group: string | undefined): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function emptyStore(): StoreFile {
+  return { version: 2, watches: [], savedViews: [] };
+}
+
+function normalizeSelector(selector: WatchSelector | undefined): WatchSelector {
+  if (!selector) return {};
+  return {
+    query: typeof selector.query === "string" ? selector.query : undefined,
+    enabled: typeof selector.enabled === "boolean" ? selector.enabled : undefined,
+    hasSnapshot: typeof selector.hasSnapshot === "boolean" ? selector.hasSnapshot : undefined,
+    hasSignals: typeof selector.hasSignals === "boolean" ? selector.hasSignals : undefined,
+    tag: typeof selector.tag === "string" ? selector.tag.trim() || undefined : undefined,
+    group: normalizeGroup(typeof selector.group === "string" ? selector.group : undefined),
+    sortBy:
+      selector.sortBy === "createdAt" || selector.sortBy === "label" || selector.sortBy === "price"
+        ? selector.sortBy
+        : undefined,
+    descending: typeof selector.descending === "boolean" ? selector.descending : undefined,
+    limit:
+      typeof selector.limit === "number" && Number.isInteger(selector.limit) && selector.limit > 0
+        ? selector.limit
+        : undefined,
+  };
+}
+
+function materializeSavedView(input: {
+  id?: string;
+  name: string;
+  description?: string;
+  selector?: WatchSelector;
+}): SavedWatchView {
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error('deal-hunter: saved view name cannot be empty');
+  }
+  return {
+    id: input.id ?? randomUUID(),
+    name,
+    description: input.description?.trim() || undefined,
+    selector: normalizeSelector(input.selector),
+    createdAt: new Date().toISOString(),
+  };
+}
+
 export async function loadStore(path: string): Promise<StoreFile> {
   try {
     const raw = await readFile(path, "utf8");
-    const data = JSON.parse(raw) as StoreFile;
-    if (!data || data.version !== 1 || !Array.isArray(data.watches)) {
-      return { version: 1, watches: [] };
+    const data = JSON.parse(raw) as { version?: number; watches?: unknown; savedViews?: unknown };
+    if (!data || !Array.isArray(data.watches)) {
+      return emptyStore();
     }
-    return data;
+    if (data.version === 1) {
+      return {
+        version: 2,
+        watches: data.watches as Watch[],
+        savedViews: [],
+      };
+    }
+    if (data.version !== 2) {
+      return emptyStore();
+    }
+    return {
+      version: 2,
+      watches: data.watches as Watch[],
+      savedViews: Array.isArray(data.savedViews) ? (data.savedViews as SavedWatchView[]).map((view) => ({
+        ...view,
+        selector: normalizeSelector(view.selector),
+      })) : [],
+    };
   } catch (e: unknown) {
     const err = e as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") return { version: 1, watches: [] };
+    if (err.code === "ENOENT") return emptyStore();
     throw e;
   }
 }
@@ -55,6 +116,34 @@ export function addWatch(store: StoreFile, partial: Omit<Watch, "id" | "createdA
   };
   store.watches.push(watch);
   return watch;
+}
+
+export function listSavedViews(store: StoreFile): SavedWatchView[] {
+  return [...store.savedViews].sort((a, b) => a.name.localeCompare(b.name) || a.createdAt.localeCompare(b.createdAt));
+}
+
+export function addSavedView(
+  store: StoreFile,
+  input: {
+    name: string;
+    description?: string;
+    selector?: WatchSelector;
+  },
+): SavedWatchView {
+  const saved = materializeSavedView(input);
+  store.savedViews.push(saved);
+  return saved;
+}
+
+export function getSavedView(store: StoreFile, id: string): SavedWatchView | undefined {
+  return store.savedViews.find((view) => view.id === id);
+}
+
+export function removeSavedView(store: StoreFile, id: string): boolean {
+  const index = store.savedViews.findIndex((view) => view.id === id);
+  if (index === -1) return false;
+  store.savedViews.splice(index, 1);
+  return true;
 }
 
 export type ImportedWatchInput = {

@@ -45,6 +45,28 @@ export type WatchImportSource = {
   importedAt: string;
 };
 
+export type WatchSearchSortBy = "createdAt" | "label" | "price";
+
+export type WatchSelector = {
+  query?: string;
+  enabled?: boolean;
+  hasSnapshot?: boolean;
+  hasSignals?: boolean;
+  tag?: string;
+  group?: string;
+  sortBy?: WatchSearchSortBy;
+  descending?: boolean;
+  limit?: number;
+};
+
+export type SavedWatchView = {
+  id: string;
+  name: string;
+  description?: string;
+  selector: WatchSelector;
+  createdAt: string;
+};
+
 export type Watch = {
   id: string;
   url: string;
@@ -63,8 +85,9 @@ export type Watch = {
 };
 
 export type StoreFile = {
-  version: 1;
+  version: 2;
   watches: Watch[];
+  savedViews: SavedWatchView[];
 };
 
 export type FetchMeta = {
