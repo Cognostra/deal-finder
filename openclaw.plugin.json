@@ -2,7 +2,7 @@
   "id": "openclaw-deal-hunter",
   "name": "Deal Hunter",
   "description": "Price watches, conditional GET scans, and heuristic deal signals for OpenClaw.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -51,7 +51,10 @@
         }
       },
       "fetcher": {
-        "enum": ["local", "firecrawl"]
+        "enum": [
+          "local",
+          "firecrawl"
+        ]
       },
       "firecrawlApiKey": {
         "type": "string"

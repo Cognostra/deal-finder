@@ -1,6 +1,6 @@
 {
   "name": "openclaw-deal-hunter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenClaw plugin: price watches, safe scans, and heuristic deal signals",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,11 +20,13 @@
   "scripts": {
     "build": "rm -rf dist && tsc",
     "pack:check": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm pack --dry-run",
+    "publish:dry-run": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm publish --dry-run",
     "release:verify": "./scripts/verify-pack-install.sh",
     "test": "env PATH=\"/usr/bin:/bin:$PATH\" ./node_modules/.bin/vitest run --configLoader runner",
     "test:diagnose": "./scripts/test-diagnose.sh",
     "prepack": "npm run build",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm test && npm run build",
+    "version": "node ./scripts/sync-plugin-version.mjs"
   },
   "openclaw": {
     "extensions": [
