@@ -109,6 +109,7 @@ agents: {
           "deal_trends",
           "deal_top_drops",
           "deal_watch_insights",
+          "deal_watch_identity",
           "deal_schedule_advice",
           "deal_doctor",
           "deal_sample_setup"
@@ -152,6 +153,7 @@ agents: {
 | `deal_trends` | Summarize falling, rising, flat, and volatile watches with compact sparklines. |
 | `deal_top_drops` | Rank the strongest deals by discount from peak or the latest committed drop. |
 | `deal_watch_insights` | Explain one watch in depth: trend, volatility, glitch risk, and active signals. |
+| `deal_watch_identity` | Show stored product identifiers for a watch and any other watches sharing those identifiers. |
 | `deal_schedule_advice` | Recommend scan cadence by host or watch from observed history timing. |
 | `deal_doctor` | Run a lightweight sanity check for config and watchlist setup. |
 | `deal_sample_setup` | Show install, config, allowlist, prompt, and cron examples. |
@@ -174,7 +176,7 @@ Recommended first-run workflow:
 12. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
 13. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
 14. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-15. `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+15. `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -186,6 +188,15 @@ Recommended first-run workflow:
 - top-level `summary` and `rankedAlerts`
 
 Snapshot and extraction metadata also include `canonicalTitle`, which normalizes cosmetic title differences for cleaner watch metadata and more stable agent summaries.
+
+Snapshots can now also persist product identity hints when the page exposes them, including fields like:
+
+- `brand`
+- `modelId`
+- `sku`
+- `mpn`
+- `gtin`
+- `asin`
 
 The current retailer-aware extractor pack includes fixture-backed support for:
 
@@ -201,6 +212,7 @@ The current retailer-aware extractor pack includes fixture-backed support for:
 
 - which extractor matched, if any
 - title and price candidates by source
+- product identity candidates by source
 - the chosen title/price source
 - extraction confidence reasons
 
@@ -222,6 +234,7 @@ The analytics tools add:
 - `deal_trends` for compact per-watch direction and volatility summaries
 - `deal_top_drops` for ranking discounts against historical peaks or the latest committed move
 - `deal_watch_insights` for one-watch explanations with sparkline context
+- `deal_watch_identity` for stored product identifiers and same-product watch matching inside the current store
 - `deal_schedule_advice` for host-level or watch-level scan cadence suggestions
 
 `deal_alerts` now includes `glitchScore` and `glitchReasons` so small models can distinguish normal threshold hits from suspicious freebie-like results.

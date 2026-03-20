@@ -12,6 +12,7 @@ import {
   buildStoreReport,
   buildTopDropsSummary,
   buildTrendsSummary,
+  buildWatchIdentitySummary,
   buildWatchInsights,
 } from "./report.js";
 
@@ -279,6 +280,59 @@ describe("buildWatchInsights", () => {
     expect(insights.trend.direction).toBe("volatile");
     expect(insights.glitch.score).toBeGreaterThanOrEqual(90);
     expect(insights.sparkline.length).toBeGreaterThan(0);
+    expect(insights.identity).toEqual([]);
+  });
+});
+
+describe("buildWatchIdentitySummary", () => {
+  it("summarizes stored identifiers and related watches", () => {
+    const identityStore: StoreFile = {
+      version: 2,
+      savedViews: [],
+      watches: [
+        {
+          id: "watch-a",
+          url: "http://shop.test/a",
+          label: "Headphones A",
+          enabled: true,
+          createdAt: "2026-03-20T00:00:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5 Wireless Headphones",
+            canonicalTitle: "sony wh-1000xm5 wireless headphones",
+            brand: "Sony",
+            modelId: "WH-1000XM5",
+            sku: "6505727",
+            price: 299.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:00:00.000Z",
+          },
+        },
+        {
+          id: "watch-b",
+          url: "http://shop.test/b",
+          label: "Headphones B",
+          enabled: true,
+          createdAt: "2026-03-20T00:05:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5",
+            canonicalTitle: "sony wh-1000xm5",
+            brand: "Sony",
+            modelId: "WH-1000XM5",
+            price: 279.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:05:00.000Z",
+          },
+        },
+      ],
+    };
+
+    const summary = buildWatchIdentitySummary(identityStore, identityStore.watches[0]!);
+    expect(summary.strength).toBe("high");
+    expect(summary.identifiers).toContainEqual({ field: "modelId", value: "WH-1000XM5" });
+    expect(summary.relatedWatches[0]).toMatchObject({
+      watchId: "watch-b",
+      sharedFields: ["brand", "modelId"],
+    });
   });
 });
 

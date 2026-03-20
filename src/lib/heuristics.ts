@@ -22,8 +22,31 @@ export function canonicalizeTitle(title?: string): string | undefined {
   return normalized.toLowerCase();
 }
 
+function normalizeIdentityValue(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || undefined;
+}
+
+function normalizeIdentifierCode(value?: string | null): string | undefined {
+  const normalized = normalizeIdentityValue(value);
+  return normalized ? normalized.toUpperCase() : undefined;
+}
+
 /** Pull Product-related JSON-LD from HTML (first match wins). */
-export function extractJsonLdProduct(html: string): { name?: string; price?: number; currency?: string } | null {
+export function extractJsonLdProduct(html: string): {
+  name?: string;
+  price?: number;
+  currency?: string;
+  brand?: string;
+  sku?: string;
+  mpn?: string;
+  gtin?: string;
+} | null {
   const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
@@ -39,13 +62,27 @@ export function extractJsonLdProduct(html: string): { name?: string; price?: num
         const offers = node.offers;
         let price: number | undefined;
         let currency: string | undefined;
+        const brandNode = node.brand;
+        const brand =
+          typeof brandNode === "string"
+            ? normalizeIdentityValue(brandNode)
+            : brandNode && typeof brandNode === "object" && typeof (brandNode as Record<string, unknown>).name === "string"
+              ? normalizeIdentityValue((brandNode as Record<string, unknown>).name as string)
+              : undefined;
+        const sku = normalizeIdentifierCode(typeof node.sku === "string" ? node.sku : undefined);
+        const mpn = normalizeIdentifierCode(typeof node.mpn === "string" ? node.mpn : undefined);
+        const gtin = normalizeIdentifierCode(
+          (["gtin", "gtin13", "gtin14", "gtin12", "gtin8"] as const)
+            .map((key) => (typeof node[key] === "string" ? node[key] : undefined))
+            .find(Boolean),
+        );
         if (offers && typeof offers === "object") {
           const o = offers as Record<string, unknown>;
           if (typeof o.price === "number") price = o.price;
           else if (typeof o.price === "string") price = Number.parseFloat(o.price);
           if (typeof o.priceCurrency === "string") currency = o.priceCurrency;
         }
-        if (name || price != null) return { name, price, currency };
+        if (name || price != null || brand || sku || mpn || gtin) return { name, price, currency, brand, sku, mpn, gtin };
         return null;
       };
 
@@ -125,9 +162,49 @@ function parseCurrencyAmount(raw?: string): { price?: number; currency?: string 
 type RetailerExtraction = {
   extractorId: string;
   title?: string;
+  brand?: string;
+  modelId?: string;
+  sku?: string;
+  mpn?: string;
+  gtin?: string;
+  asin?: string;
   price?: number;
   currency?: string;
 };
+
+function extractMetaIdentity(html: string): Pick<ExtractedListing, "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"> {
+  const brand =
+    normalizeIdentityValue(matchMetaContent(html, "product:brand") ?? matchMetaContent(html, "brand")) ??
+    normalizeIdentityValue(html.match(/itemprop=["']brand["'][^>]*content=["']([^"']+)["']/i)?.[1]);
+  const sku =
+    normalizeIdentifierCode(matchMetaContent(html, "sku")) ??
+    normalizeIdentifierCode(html.match(/itemprop=["']sku["'][^>]*content=["']([^"']+)["']/i)?.[1]);
+  const mpn =
+    normalizeIdentifierCode(matchMetaContent(html, "mpn")) ??
+    normalizeIdentifierCode(html.match(/itemprop=["']mpn["'][^>]*content=["']([^"']+)["']/i)?.[1]);
+  const gtin =
+    normalizeIdentifierCode(
+      matchMetaContent(html, "gtin") ??
+        matchMetaContent(html, "gtin13") ??
+        matchMetaContent(html, "gtin14") ??
+        matchMetaContent(html, "product:gtin") ??
+        html.match(/itemprop=["']gtin(?:8|12|13|14)?["'][^>]*content=["']([^"']+)["']/i)?.[1],
+    );
+  const asin =
+    normalizeIdentifierCode(
+      html.match(/(?:id|name)=["']ASIN["'][^>]*value=["']([^"']+)["']/i)?.[1] ??
+        html.match(/data-asin=["']([^"']+)["']/i)?.[1] ??
+        matchMetaContent(html, "asin"),
+    );
+  const modelId =
+    normalizeIdentifierCode(
+      html.match(/itemprop=["']model["'][^>]*content=["']([^"']+)["']/i)?.[1] ??
+        matchMetaContent(html, "model") ??
+        html.match(/\b([A-Z]{1,5}-[A-Z0-9-]{3,}|\b[A-Z]{2,}\d[A-Z0-9-]{2,}\b)/)?.[1],
+    );
+
+  return { brand, modelId, sku, mpn, gtin, asin };
+}
 
 function extractAmazonListing(html: string): RetailerExtraction | null {
   if (!/productTitle|a-price/i.test(html)) return null;
@@ -142,6 +219,10 @@ function extractAmazonListing(html: string): RetailerExtraction | null {
   return {
     extractorId: "retailer_amazon",
     title,
+    asin: normalizeIdentifierCode(
+      html.match(/(?:id|name)=["']ASIN["'][^>]*value=["']([^"']+)["']/i)?.[1] ??
+        html.match(/data-asin=["']([^"']+)["']/i)?.[1],
+    ),
     price: amount.price,
     currency: amount.currency,
   };
@@ -166,6 +247,11 @@ function extractBestBuyListing(html: string): RetailerExtraction | null {
   return {
     extractorId: "retailer_best_buy",
     title,
+    brand: normalizeIdentityValue(title?.split(" ")[0]),
+    modelId: normalizeIdentifierCode(title?.match(/\b([A-Z]{1,5}-[A-Z0-9-]{3,})\b/)?.[1]),
+    sku:
+      normalizeIdentifierCode(html.match(/itemprop=["']sku["'][^>]*content=["']([^"']+)["']/i)?.[1]) ??
+      normalizeIdentifierCode(html.match(/sku["':\s>#-]*([0-9]{5,})/i)?.[1]),
     price: amount.price,
     currency: amount.currency,
   };
@@ -193,6 +279,7 @@ function extractEbayListing(html: string): RetailerExtraction | null {
   return {
     extractorId: "retailer_ebay",
     title,
+    brand: normalizeIdentityValue(title?.split(" ")[0]),
     price: amount.price,
     currency: amount.currency,
   };
@@ -217,6 +304,7 @@ function extractTargetListing(html: string): RetailerExtraction | null {
   return {
     extractorId: "retailer_target",
     title,
+    brand: normalizeIdentityValue(title?.split(" ")[0]),
     price: amount.price,
     currency: amount.currency,
   };
@@ -242,6 +330,7 @@ function extractWalmartListing(html: string): RetailerExtraction | null {
   return {
     extractorId: "retailer_walmart",
     title,
+    brand: normalizeIdentityValue(title?.split(" ")[0]),
     price: amount.price,
     currency: amount.currency,
   };
@@ -267,6 +356,9 @@ function extractNeweggListing(html: string): RetailerExtraction | null {
   return {
     extractorId: "retailer_newegg",
     title,
+    brand: normalizeIdentityValue(title?.split(" ")[0]),
+    modelId:
+      normalizeIdentifierCode(title?.match(/\b(RX\s*\d{4}|RTX\s*\d{4}|[A-Z]{1,5}-[A-Z0-9-]{3,})\b/i)?.[1]?.replace(/\s+/g, " ")),
     price,
     currency: price != null ? "USD" : undefined,
   };
@@ -292,6 +384,7 @@ function extractHomeDepotListing(html: string): RetailerExtraction | null {
   return {
     extractorId: "retailer_home_depot",
     title,
+    brand: normalizeIdentityValue(title?.split(" ")[0]),
     price: amount.price,
     currency: amount.currency,
   };
@@ -338,6 +431,7 @@ export function extractListing(html: string, maxSnippet = 4000): ExtractedListin
   const retailer = extractRetailerListing(html);
   const ld = extractJsonLdProduct(html);
   const og = extractOgTags(html);
+  const metaIdentity = extractMetaIdentity(html);
   const fb = extractPriceFallback(html);
 
   const title = retailer?.title ?? ld?.name ?? og.title;
@@ -350,6 +444,12 @@ export function extractListing(html: string, maxSnippet = 4000): ExtractedListin
   return {
     title: title?.slice(0, 500),
     canonicalTitle,
+    brand: retailer?.brand ?? ld?.brand ?? metaIdentity.brand,
+    modelId: retailer?.modelId ?? metaIdentity.modelId,
+    sku: retailer?.sku ?? ld?.sku ?? metaIdentity.sku,
+    mpn: retailer?.mpn ?? ld?.mpn ?? metaIdentity.mpn,
+    gtin: retailer?.gtin ?? ld?.gtin ?? metaIdentity.gtin,
+    asin: retailer?.asin ?? metaIdentity.asin,
     price,
     currency,
     snippet: snippet.slice(0, maxSnippet),
@@ -361,6 +461,7 @@ export function scoreExtractedListing(extracted: ExtractedListing): ExtractionCo
     extracted.title ? "title" : null,
     extracted.price != null ? "price" : null,
     extracted.currency ? "currency" : null,
+    extracted.modelId || extracted.sku || extracted.mpn || extracted.gtin || extracted.asin ? "identity" : null,
   ].filter((value): value is string => Boolean(value));
 
   return {
@@ -389,6 +490,7 @@ export function debugExtractListing(html: string, maxSnippet = 4000): {
   const retailer = extractRetailerListing(html);
   const ld = extractJsonLdProduct(html);
   const og = extractOgTags(html);
+  const metaIdentity = extractMetaIdentity(html);
   const fb = extractPriceFallback(html);
   const extracted = extractListing(html, maxSnippet);
 
@@ -402,6 +504,53 @@ export function debugExtractListing(html: string, maxSnippet = 4000): {
   if (ld?.price != null) priceCandidates.push({ source: "json_ld", value: ld.price, currency: ld.currency });
   if (og.price != null) priceCandidates.push({ source: "open_graph", value: og.price, currency: og.currency });
   if (fb.price != null) priceCandidates.push({ source: "price_regex_fallback", value: fb.price, currency: fb.currency });
+
+  const identityCandidates: ExtractionDebugInfo["identityCandidates"] = [];
+  const addIdentityCandidate = (
+    field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin",
+    source: string,
+    value: string | undefined,
+  ) => {
+    if (!value) return;
+    identityCandidates.push({ field, source, value });
+  };
+  addIdentityCandidate("brand", retailer?.extractorId ?? "retailer", retailer?.brand);
+  addIdentityCandidate("modelId", retailer?.extractorId ?? "retailer", retailer?.modelId);
+  addIdentityCandidate("sku", retailer?.extractorId ?? "retailer", retailer?.sku);
+  addIdentityCandidate("mpn", retailer?.extractorId ?? "retailer", retailer?.mpn);
+  addIdentityCandidate("gtin", retailer?.extractorId ?? "retailer", retailer?.gtin);
+  addIdentityCandidate("asin", retailer?.extractorId ?? "retailer", retailer?.asin);
+  addIdentityCandidate("brand", "json_ld", ld?.brand);
+  addIdentityCandidate("sku", "json_ld", ld?.sku);
+  addIdentityCandidate("mpn", "json_ld", ld?.mpn);
+  addIdentityCandidate("gtin", "json_ld", ld?.gtin);
+  addIdentityCandidate("brand", "meta", metaIdentity.brand);
+  addIdentityCandidate("modelId", "meta", metaIdentity.modelId);
+  addIdentityCandidate("sku", "meta", metaIdentity.sku);
+  addIdentityCandidate("mpn", "meta", metaIdentity.mpn);
+  addIdentityCandidate("gtin", "meta", metaIdentity.gtin);
+  addIdentityCandidate("asin", "meta", metaIdentity.asin);
+
+  const chosenIdentityFields: ExtractionDebugInfo["chosen"]["identityFields"] = [];
+  const pushChosenIdentity = (
+    field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin",
+    value: string | undefined,
+    choices: Array<{ source: string; value: string }>,
+  ) => {
+    if (!value) return;
+    const match = choices.find((choice) => choice.value === value);
+    chosenIdentityFields.push({
+      field,
+      source: match?.source ?? "combined",
+      value,
+    });
+  };
+  pushChosenIdentity("brand", extracted.brand, identityCandidates.filter((candidate) => candidate.field === "brand"));
+  pushChosenIdentity("modelId", extracted.modelId, identityCandidates.filter((candidate) => candidate.field === "modelId"));
+  pushChosenIdentity("sku", extracted.sku, identityCandidates.filter((candidate) => candidate.field === "sku"));
+  pushChosenIdentity("mpn", extracted.mpn, identityCandidates.filter((candidate) => candidate.field === "mpn"));
+  pushChosenIdentity("gtin", extracted.gtin, identityCandidates.filter((candidate) => candidate.field === "gtin"));
+  pushChosenIdentity("asin", extracted.asin, identityCandidates.filter((candidate) => candidate.field === "asin"));
 
   const titleSource =
     extracted.title && retailer?.title === extracted.title
@@ -430,12 +579,14 @@ export function debugExtractListing(html: string, maxSnippet = 4000): {
       matchedExtractor: retailer?.extractorId,
       titleCandidates,
       priceCandidates,
+      identityCandidates,
       chosen: {
         title: extracted.title && titleSource ? { source: titleSource, value: extracted.title } : undefined,
         price:
           extracted.price != null && priceSource
             ? { source: priceSource, value: extracted.price, currency: extracted.currency }
             : undefined,
+        identityFields: chosenIdentityFields,
       },
     },
   };

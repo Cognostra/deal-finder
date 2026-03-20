@@ -16,6 +16,7 @@ import {
   buildStoreReport,
   buildTopDropsSummary,
   buildTrendsSummary,
+  buildWatchIdentitySummary,
   buildWatchInsights,
 } from "./lib/report.js";
 import type { ImportedWatchInput } from "./lib/store.js";
@@ -118,6 +119,12 @@ const IMPORTED_WATCH_SCHEMA = Type.Object({
     Type.Object({
       title: Type.Optional(Type.String()),
       canonicalTitle: Type.Optional(Type.String()),
+      brand: Type.Optional(Type.String()),
+      modelId: Type.Optional(Type.String()),
+      sku: Type.Optional(Type.String()),
+      mpn: Type.Optional(Type.String()),
+      gtin: Type.Optional(Type.String()),
+      asin: Type.Optional(Type.String()),
       price: Type.Optional(Type.Number()),
       currency: Type.Optional(Type.String()),
       etag: Type.Optional(Type.String()),
@@ -1177,6 +1184,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_trends",
               "deal_top_drops",
               "deal_watch_insights",
+              "deal_watch_identity",
               "deal_schedule_advice",
             ],
             firstPrompt:
@@ -1203,6 +1211,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_trends",
               "deal_top_drops",
               "deal_watch_insights",
+              "deal_watch_identity",
               "deal_schedule_advice",
             ],
             writeTools: [
@@ -1220,7 +1229,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_scan",
             ],
             examplePrompt:
-              "Use deal_saved_view_run for my GPU alerts view, then use deal_top_drops and deal_watch_insights to explain which watch looks like the strongest real deal right now.",
+              "Use deal_saved_view_run for my GPU alerts view, then use deal_top_drops, deal_watch_identity, and deal_watch_insights to explain which watch looks like the strongest real deal right now.",
           },
           cron: {
             example:
@@ -1449,6 +1458,29 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           };
         }
         return jsonResult(buildWatchInsights(watch));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_watch_identity",
+      label: "Deal Hunter",
+      description: "Show stored product identifiers for a watch and any other watches sharing those identifiers.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "watch not found" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+        return jsonResult(buildWatchIdentitySummary(store, watch));
       },
     },
     { optional: false },

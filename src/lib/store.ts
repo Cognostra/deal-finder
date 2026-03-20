@@ -499,6 +499,12 @@ function expectOptionalLastSnapshot(value: unknown): Watch["lastSnapshot"] {
   return {
     title: expectOptionalString(obj.title, "lastSnapshot.title"),
     canonicalTitle: expectOptionalString(obj.canonicalTitle, "lastSnapshot.canonicalTitle"),
+    brand: expectOptionalString(obj.brand, "lastSnapshot.brand"),
+    modelId: expectOptionalString(obj.modelId, "lastSnapshot.modelId"),
+    sku: expectOptionalString(obj.sku, "lastSnapshot.sku"),
+    mpn: expectOptionalString(obj.mpn, "lastSnapshot.mpn"),
+    gtin: expectOptionalString(obj.gtin, "lastSnapshot.gtin"),
+    asin: expectOptionalString(obj.asin, "lastSnapshot.asin"),
     price: expectOptionalNumber(obj.price, "lastSnapshot.price"),
     currency: expectOptionalString(obj.currency, "lastSnapshot.currency"),
     etag: expectOptionalString(obj.etag, "lastSnapshot.etag"),

@@ -6,6 +6,21 @@ function getHistoryEntries(watch: Watch): WatchHistoryEntry[] {
   return watch.history ?? [];
 }
 
+function getWatchIdentityFields(watch: Watch): Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string }> {
+  const snapshot = watch.lastSnapshot;
+  if (!snapshot) return [];
+  return ([
+    ["brand", snapshot.brand],
+    ["modelId", snapshot.modelId],
+    ["sku", snapshot.sku],
+    ["mpn", snapshot.mpn],
+    ["gtin", snapshot.gtin],
+    ["asin", snapshot.asin],
+  ] as const)
+    .filter((entry): entry is [typeof entry[0], string] => Boolean(entry[1]))
+    .map(([field, value]) => ({ field, value }));
+}
+
 function getHistoryPrices(watch: Watch): number[] {
   return getHistoryEntries(watch)
     .map((entry) => entry.price)
@@ -542,6 +557,7 @@ export function buildSampleSetup() {
       "deal_trends",
       "deal_top_drops",
       "deal_watch_insights",
+      "deal_watch_identity",
       "deal_schedule_advice",
       "deal_doctor",
       "deal_sample_setup",
@@ -557,6 +573,7 @@ export function buildSampleSetup() {
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
       "Use deal_top_drops and deal_trends to show me the strongest current deals with context.",
       "Use deal_watch_insights for my most volatile watch and explain whether it looks real or noisy.",
+      "Use deal_watch_identity for my best current deal and tell me whether any other watches appear to be the same product.",
       "Use deal_watch_export to back up my watches, then prepare a deal_watch_import dry run for another workspace.",
       "Fetch a shared JSON watchlist with deal_watch_import_url in dry-run mode and show me what would change.",
     ],
@@ -575,7 +592,7 @@ export function buildQuickstartGuide() {
       "Use deal_saved_view_create for repeat searches once your watchlist grows beyond a few items.",
       "Use deal_watch_tag or deal_watch_bulk_update once you have enough watches to organize by tag or group.",
       "Run deal_scan with commit true to capture the first snapshot.",
-      "Use deal_alerts, deal_trends, and deal_report to inspect what changed.",
+      "Use deal_alerts, deal_trends, deal_watch_identity, and deal_report to inspect what changed.",
       "Use deal_watch_export before large watchlist edits or migration.",
       "Use deal_watch_import_url with dryRun first before applying a shared remote watchlist.",
     ],
@@ -845,6 +862,7 @@ export function buildWatchInsights(
   activeSignals: string[];
   sparkline: string;
   historyCount: number;
+  identity: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string }>;
 } {
   const history = summarizeHistory(watch);
   const trend = classifyTrend(watch, history);
@@ -878,6 +896,77 @@ export function buildWatchInsights(
     activeSignals,
     sparkline: sparkline(getHistoryPrices(watch).slice(-12)),
     historyCount: history.historyCount,
+    identity: getWatchIdentityFields(watch),
+  };
+}
+
+export function buildWatchIdentitySummary(
+  store: StoreFile,
+  watch: Watch,
+): {
+  watchId: string;
+  label?: string;
+  url: string;
+  identifiers: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string }>;
+  strength: "none" | "low" | "medium" | "high";
+  reasons: string[];
+  relatedWatches: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    sharedFields: string[];
+    latestPrice?: number;
+  }>;
+} {
+  const identifiers = getWatchIdentityFields(watch);
+  const reasons: string[] = [];
+  const strongFields = new Set(["gtin", "asin", "mpn", "modelId"]);
+  const strengthScore = identifiers.reduce((score, identifier) => {
+    if (strongFields.has(identifier.field)) return score + 2;
+    return score + 1;
+  }, 0);
+
+  if (!identifiers.length) {
+    reasons.push("No persistent product identifiers are stored on the latest snapshot.");
+  } else {
+    reasons.push(`Stored identifiers: ${identifiers.map((identifier) => `${identifier.field}=${identifier.value}`).join(", ")}.`);
+  }
+
+  const identifierMap = new Map(identifiers.map((identifier) => [`${identifier.field}:${identifier.value}`, identifier.field]));
+  const relatedWatches = store.watches
+    .filter((candidate) => candidate.id !== watch.id)
+    .map((candidate) => {
+      const sharedFields = getWatchIdentityFields(candidate)
+        .filter((identifier) => identifierMap.has(`${identifier.field}:${identifier.value}`))
+        .map((identifier) => identifier.field);
+      if (!sharedFields.length) return null;
+      return {
+        watchId: candidate.id,
+        label: candidate.label,
+        url: candidate.url,
+        sharedFields,
+        latestPrice: candidate.lastSnapshot?.price,
+      };
+    })
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+    .sort((a, b) => b.sharedFields.length - a.sharedFields.length || a.url.localeCompare(b.url))
+    .slice(0, 10);
+
+  if (relatedWatches.length) {
+    reasons.push(`Found ${relatedWatches.length} other watch${relatedWatches.length === 1 ? "" : "es"} sharing stored identifiers.`);
+  }
+
+  const strength =
+    strengthScore >= 4 ? "high" : strengthScore >= 2 ? "medium" : strengthScore >= 1 ? "low" : "none";
+
+  return {
+    watchId: watch.id,
+    label: watch.label,
+    url: watch.url,
+    identifiers,
+    strength,
+    reasons,
+    relatedWatches,
   };
 }
 

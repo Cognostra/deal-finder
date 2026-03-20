@@ -59,6 +59,12 @@ function snapshotFromExtracted(
   return {
     title: extracted.title,
     canonicalTitle: extracted.canonicalTitle,
+    brand: extracted.brand,
+    modelId: extracted.modelId,
+    sku: extracted.sku,
+    mpn: extracted.mpn,
+    gtin: extracted.gtin,
+    asin: extracted.asin,
     price: extracted.price,
     currency: extracted.currency,
     etag: meta.etag ?? prev?.etag,

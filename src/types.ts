@@ -17,6 +17,12 @@ export type DealHunterPluginConfig = {
 export type WatchSnapshot = {
   title?: string;
   canonicalTitle?: string;
+  brand?: string;
+  modelId?: string;
+  sku?: string;
+  mpn?: string;
+  gtin?: string;
+  asin?: string;
   price?: number;
   currency?: string;
   etag?: string;
@@ -102,6 +108,12 @@ export type FetchMeta = {
 export type ExtractedListing = {
   title?: string;
   canonicalTitle?: string;
+  brand?: string;
+  modelId?: string;
+  sku?: string;
+  mpn?: string;
+  gtin?: string;
+  asin?: string;
   price?: number;
   currency?: string;
   snippet?: string;
@@ -111,9 +123,11 @@ export type ExtractionDebugInfo = {
   matchedExtractor?: string;
   titleCandidates: Array<{ source: string; value: string }>;
   priceCandidates: Array<{ source: string; value: number; currency?: string }>;
+  identityCandidates: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; source: string; value: string }>;
   chosen: {
     title?: { source: string; value: string };
     price?: { source: string; value: number; currency?: string };
+    identityFields: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; source: string; value: string }>;
   };
 };
 

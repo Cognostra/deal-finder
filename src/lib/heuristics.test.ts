@@ -15,9 +15,13 @@ describe("hashSnippet", () => {
 
 describe("extractJsonLdProduct", () => {
   it("parses single product", () => {
-    const html = `<script type="application/ld+json">{"@type":"Product","name":"Widget","offers":{"@type":"Offer","price":9.99,"priceCurrency":"USD"}}</script>`;
+    const html = `<script type="application/ld+json">{"@type":"Product","name":"Widget","brand":{"@type":"Brand","name":"Acme"},"sku":"WID-001","mpn":"WID-001-BL","gtin13":"0123456789012","offers":{"@type":"Offer","price":9.99,"priceCurrency":"USD"}}</script>`;
     expect(extractJsonLdProduct(html)).toEqual({
       name: "Widget",
+      brand: "Acme",
+      sku: "WID-001",
+      mpn: "WID-001-BL",
+      gtin: "0123456789012",
       price: 9.99,
       currency: "USD",
     });
@@ -42,6 +46,15 @@ describe("extractListing", () => {
     expect(x.title).toBe("Widget™ Pro — Blue");
     expect(x.canonicalTitle).toBe("widget pro - blue");
   });
+
+  it("extracts brand and product identifiers when available", () => {
+    const html = loadFixture("bestbuy-product.html");
+    const x = extractListing(html);
+    expect(x.brand).toBe("Sony");
+    expect(x.modelId).toBe("WH-1000XM5");
+    expect(x.sku).toBe("6505727");
+    expect(x.mpn).toBe("WH1000XM5/B");
+  });
 });
 
 describe("debugExtractListing", () => {
@@ -64,6 +77,7 @@ describe("debugExtractListing", () => {
     expect(debug.debug.matchedExtractor).toBe("retailer_amazon");
     expect(debug.debug.chosen.title).toEqual({ source: "retailer_amazon", value: "Echo Dot (5th Gen) Smart Speaker" });
     expect(debug.debug.chosen.price).toEqual({ source: "retailer_amazon", value: 34.99, currency: "USD" });
+    expect(debug.debug.chosen.identityFields).toContainEqual({ field: "asin", source: "retailer_amazon", value: "B09B8V1LZ3" });
   });
 });
 
@@ -93,6 +107,7 @@ describe("extractRetailerListing fixtures", () => {
     expect(extractRetailerListing(loadFixture("amazon-product.html"))).toEqual({
       extractorId: "retailer_amazon",
       title: "Echo Dot (5th Gen) Smart Speaker",
+      asin: "B09B8V1LZ3",
       price: 34.99,
       currency: "USD",
     });
@@ -102,6 +117,9 @@ describe("extractRetailerListing fixtures", () => {
     expect(extractRetailerListing(loadFixture("bestbuy-product.html"))).toEqual({
       extractorId: "retailer_best_buy",
       title: "Sony WH-1000XM5 Wireless Headphones",
+      brand: "Sony",
+      modelId: "WH-1000XM5",
+      sku: "6505727",
       price: 299.99,
       currency: "USD",
     });
@@ -111,6 +129,7 @@ describe("extractRetailerListing fixtures", () => {
     expect(extractRetailerListing(loadFixture("ebay-product.html"))).toEqual({
       extractorId: "retailer_ebay",
       title: "Vintage Nintendo GameCube Console",
+      brand: "Vintage",
       price: 89.5,
       currency: "USD",
     });
@@ -120,6 +139,7 @@ describe("extractRetailerListing fixtures", () => {
     expect(extractRetailerListing(loadFixture("target-product.html"))).toEqual({
       extractorId: "retailer_target",
       title: "LEGO Star Wars X-Wing Starfighter",
+      brand: "LEGO",
       price: 47.99,
       currency: "USD",
     });
@@ -129,6 +149,7 @@ describe("extractRetailerListing fixtures", () => {
     expect(extractRetailerListing(loadFixture("walmart-product.html"))).toEqual({
       extractorId: "retailer_walmart",
       title: "Apple AirPods Pro (2nd Generation)",
+      brand: "Apple",
       price: 189,
       currency: "USD",
     });
@@ -138,6 +159,8 @@ describe("extractRetailerListing fixtures", () => {
     expect(extractRetailerListing(loadFixture("newegg-product.html"))).toEqual({
       extractorId: "retailer_newegg",
       title: "ASRock Radeon RX 7600 Challenger 8GB",
+      brand: "ASRock",
+      modelId: "RX 7600",
       price: 249.99,
       currency: "USD",
     });
@@ -147,6 +170,7 @@ describe("extractRetailerListing fixtures", () => {
     expect(extractRetailerListing(loadFixture("home-depot-product.html"))).toEqual({
       extractorId: "retailer_home_depot",
       title: "DEWALT 20V MAX Cordless Drill Kit",
+      brand: "DEWALT",
       price: 129,
       currency: "USD",
     });
