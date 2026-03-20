@@ -22,6 +22,7 @@ import {
   buildTopDropsSummary,
   buildTrendsSummary,
   buildViewReport,
+  buildWorkflowActionQueue,
   buildWorkflowBestOpportunities,
   buildWorkflowCleanup,
   buildWorkflowPortfolio,
@@ -226,6 +227,16 @@ describe("buildDigestSummary", () => {
     expect(digest.actions.length).toBeGreaterThan(0);
     expect(digest.digestText).toContain("Highlights:");
     expect(digest.digestText).toContain("Actions:");
+  });
+});
+
+describe("buildWorkflowActionQueue", () => {
+  it("builds a ranked next-actions queue from multiple workflow surfaces", () => {
+    const queue = buildWorkflowActionQueue(store, { scopeLabel: "watchlist", limit: 6, severity: "medium" });
+    expect(queue.scopeLabel).toBe("watchlist");
+    expect(queue.itemCount).toBeGreaterThan(0);
+    expect(queue.items.some((item) => item.category === "opportunity" || item.category === "alert")).toBe(true);
+    expect(queue.actionSummary.length).toBeGreaterThan(0);
   });
 });
 

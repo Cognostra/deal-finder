@@ -32,6 +32,7 @@ import {
   buildTrendsSummary,
   buildViewReport,
   buildWorkflowBestOpportunities,
+  buildWorkflowActionQueue,
   buildWorkflowCleanup,
   buildWorkflowPortfolio,
   buildWorkflowTriage,
@@ -1731,6 +1732,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_import_url",
               "deal_scan",
               "deal_digest",
+              "deal_workflow_action_queue",
               "deal_workflow_portfolio",
               "deal_workflow_triage",
               "deal_workflow_cleanup",
@@ -1775,6 +1777,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_evaluate_text",
               "deal_help",
               "deal_digest",
+              "deal_workflow_action_queue",
               "deal_history",
               "deal_alerts",
               "deal_trends",
@@ -1909,6 +1912,37 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           savedView: selection?.summary,
           ...buildDigestSummary(scopedStore, {
             limit: params.limit ?? 5,
+            severity: params.severity ?? "medium",
+            scopeLabel: selection?.summary?.name ?? "watchlist",
+          }),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_workflow_action_queue",
+      label: "Deal Hunter",
+      description: "Build a prioritized next-actions queue from current opportunities, alerts, cleanup issues, discovery targets, and review candidates.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        severity: Type.Optional(Type.Union([
+          Type.Literal("low"),
+          Type.Literal("medium"),
+          Type.Literal("high"),
+        ])),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildWorkflowActionQueue(scopedStore, {
+            limit: params.limit ?? 10,
             severity: params.severity ?? "medium",
             scopeLabel: selection?.summary?.name ?? "watchlist",
           }),
