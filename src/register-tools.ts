@@ -5,6 +5,7 @@ import { resolveDealConfig } from "./config.js";
 import { mergeCommittedScanResults, runScan } from "./lib/engine.js";
 import { cappedFetch } from "./lib/fetch.js";
 import { evaluateListingText, extractListing } from "./lib/heuristics.js";
+import { buildHealthSummary, buildStoreReport } from "./lib/report.js";
 import { addWatch, getWatch, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "./lib/store.js";
 import { buildWatchSignals, searchWatches } from "./lib/watch-view.js";
 import { validateTargetUrl } from "./lib/url-policy.js";
@@ -467,6 +468,39 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           topic,
           details: topics[topic],
         });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_report",
+      label: "Deal Hunter",
+      description: "Summarize the current watchlist, snapshots, and signal-heavy watches.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const store = await loadStore(storePath);
+        const report = buildStoreReport(store);
+        return jsonResult({
+          ...report,
+          watches: store.watches.map(toWatchView),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_health",
+      label: "Deal Hunter",
+      description: "Show configuration, storage, safety posture, and operational recommendations.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const cfg = resolveDealConfig(api);
+        const store = await loadStore(storePath);
+        return jsonResult(buildHealthSummary(store, cfg, storePath));
       },
     },
     { optional: false },

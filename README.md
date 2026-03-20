@@ -83,7 +83,9 @@ agents: {
           "deal_scan",
           "deal_fetch_url",
           "deal_evaluate_text",
-          "deal_help"
+          "deal_help",
+          "deal_report",
+          "deal_health"
         ]
       }
     }
@@ -105,6 +107,8 @@ agents: {
 | `deal_fetch_url` | One-off capped fetch + heuristic extraction. |
 | `deal_evaluate_text` | Score pasted text for “freebie / glitchy” wording (no network). |
 | `deal_help` | Show install, tool, cron, and safety guidance from inside OpenClaw. |
+| `deal_report` | Summarize the current watchlist, snapshots, and signal-heavy watches. |
+| `deal_health` | Show configuration, storage, safety posture, and operational recommendations. |
 
 Side-effecting tools are registered as **optional** (except `deal_watch_list` / `deal_evaluate_text`) so you opt in via `tools.allow`.
 
@@ -115,6 +119,7 @@ Recommended first-run workflow:
 3. `deal_watch_search` to inspect watches and current threshold/keyword signals.
 4. `deal_scan` with `commit: true` to capture snapshots.
 5. `deal_watch_update` or `deal_watch_set_enabled` as the watchlist grows.
+6. `deal_report` and `deal_health` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
