@@ -2,7 +2,7 @@ import type { ResolvedDealConfig } from "../config.js";
 import type { AlertSeverity, DiscoveryCandidate, FetchSource, LlmReviewCandidate, ProductIdentityEntry, ProductIdentityField, ReviewedSnapshotField, StoreFile, Watch, WatchHistoryEntry, WatchImportSource } from "../types.js";
 import { buildProductGroups, buildProductMatchCandidates, getWatchHost, getWatchIdentityFields, getWatchIdentityStrength } from "./product-identity.js";
 import { canonicalizeWatchUrl } from "./url-policy.js";
-import { buildWatchSignals } from "./watch-view.js";
+import { buildWatchSignals, searchWatches } from "./watch-view.js";
 
 function getHistoryEntries(watch: Watch): WatchHistoryEntry[] {
   return watch.history ?? [];
@@ -743,6 +743,7 @@ export function buildSampleSetup() {
       "deal_saved_view_create",
       "deal_saved_view_update",
       "deal_saved_view_run",
+      "deal_saved_view_dashboard",
       "deal_saved_view_delete",
       "deal_view_scan",
       "deal_view_report",
@@ -803,6 +804,7 @@ export function buildSampleSetup() {
       "Use deal_host_report and tell me which retailer hosts are driving the most signals right now.",
       "Use deal_watch_search to show me disabled watches and any watches currently showing threshold or keyword signals.",
       "Use deal_saved_view_create to save a view for my GPU watches with active signals, then run it.",
+      "Use deal_saved_view_dashboard so I can see which saved views currently deserve attention first.",
       "Use deal_saved_view_update to rename my GPU view and tighten the selector to only enabled watches with snapshots.",
       "Use deal_watch_tag to tag my GPU watches and group them under pc-build.",
       "Use deal_view_scan with commit true for my GPU alerts saved view, then summarize what changed.",
@@ -2918,6 +2920,127 @@ export function buildDigestSummary(
     strongestAlerts: triage.strongestAlerts,
     changed: triage.changed,
     probableNoise: triage.probableNoise,
+  };
+}
+
+export function buildSavedViewDashboard(
+  store: StoreFile,
+  options?: {
+    limit?: number;
+    severity?: AlertSeverity;
+  },
+): {
+  savedViewCount: number;
+  populatedViewCount: number;
+  emptyViewCount: number;
+  views: Array<{
+    savedViewId: string;
+    name: string;
+    description?: string;
+    matchCount: number;
+    enabledMatchCount: number;
+    signalMatchCount: number;
+    topLine: string;
+    hottestAlert?: {
+      watchId: string;
+      label?: string;
+      severity: AlertSeverity;
+      summaryLine?: string;
+    };
+    bestOpportunity?: {
+      watchId: string;
+      label?: string;
+      latestPrice?: number;
+      summaryLine?: string;
+    };
+    nextAction?: {
+      title: string;
+      category: "opportunity" | "alert" | "cleanup" | "discovery" | "review";
+      recommendedTool: string;
+    };
+    priorityScore: number;
+  }>;
+  actionSummary: string[];
+} {
+  const limit = options?.limit ?? 10;
+  const severity = options?.severity ?? "medium";
+  const views = store.savedViews
+    .map((view) => {
+      const watches = searchWatches(store.watches, view.selector);
+      const scopedStore = buildSubsetStore(store, watches);
+      const digest = buildDigestSummary(scopedStore, {
+        limit: Math.min(limit, 5),
+        severity,
+        scopeLabel: view.name,
+      });
+      const queue = buildWorkflowActionQueue(scopedStore, {
+        limit: Math.min(limit, 5),
+        severity,
+        scopeLabel: view.name,
+      });
+      const hottestAlert = digest.strongestAlerts[0]
+        ? {
+            watchId: digest.strongestAlerts[0].watchId,
+            label: digest.strongestAlerts[0].label,
+            severity: digest.strongestAlerts[0].severity,
+            summaryLine: digest.strongestAlerts[0].summaryLine,
+          }
+        : undefined;
+      const bestOpportunity = digest.bestOpportunity
+        ? {
+            watchId: digest.bestOpportunity.watchId,
+            label: digest.bestOpportunity.label,
+            latestPrice: digest.bestOpportunity.latestPrice,
+            summaryLine: digest.bestOpportunity.summaryLine,
+          }
+        : undefined;
+      const nextAction = queue.items[0]
+        ? {
+            title: queue.items[0].title,
+            category: queue.items[0].category,
+            recommendedTool: queue.items[0].recommendedTool,
+          }
+        : undefined;
+      const enabledMatchCount = watches.filter((watch) => watch.enabled).length;
+      const signalMatchCount = watches.filter((watch) => buildWatchSignals(watch).length > 0).length;
+      const priorityScore =
+        (bestOpportunity ? 60 : 0) +
+        (hottestAlert ? (hottestAlert.severity === "high" ? 35 : hottestAlert.severity === "medium" ? 20 : 10) : 0) +
+        Math.min(15, signalMatchCount * 3) +
+        (nextAction ? 10 : 0);
+
+      return {
+        savedViewId: view.id,
+        name: view.name,
+        description: view.description,
+        matchCount: watches.length,
+        enabledMatchCount,
+        signalMatchCount,
+        topLine: digest.topLine,
+        hottestAlert,
+        bestOpportunity,
+        nextAction,
+        priorityScore,
+      };
+    })
+    .sort((a, b) => b.priorityScore - a.priorityScore || b.matchCount - a.matchCount || a.name.localeCompare(b.name))
+    .slice(0, limit);
+
+  const actionSummary: string[] = [];
+  if (views[0]) {
+    actionSummary.push(`Start with saved view ${views[0].name}; it currently has the highest action priority.`);
+  }
+  const emptyViewCount = store.savedViews.filter((view) => searchWatches(store.watches, view.selector).length === 0).length;
+  if (emptyViewCount) {
+    actionSummary.push(`${emptyViewCount} saved view${emptyViewCount === 1 ? "" : "s"} currently match no watches and may need retuning.`);
+  }
+
+  return {
+    savedViewCount: store.savedViews.length,
+    populatedViewCount: views.filter((view) => view.matchCount > 0).length,
+    emptyViewCount,
+    views,
+    actionSummary,
   };
 }
 

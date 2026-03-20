@@ -15,6 +15,7 @@ import {
   buildMarketCheckSummary,
   buildProductGroupsSummary,
   buildQuickstartGuide,
+  buildSavedViewDashboard,
   buildScheduleAdvice,
   buildSampleSetup,
   buildStoreReport,
@@ -160,6 +161,21 @@ const store: StoreFile = {
   ],
 };
 
+store.savedViews = [
+  {
+    id: "view-1",
+    name: "GPU alerts",
+    selector: { tag: "gpu", hasSignals: true },
+    createdAt: "2026-03-20T02:00:00.000Z",
+  },
+  {
+    id: "view-2",
+    name: "Disabled watches",
+    selector: { enabled: false },
+    createdAt: "2026-03-20T03:00:00.000Z",
+  },
+];
+
 const cfg: ResolvedDealConfig = {
   storePath: "/tmp/store.json",
   maxConcurrent: 8,
@@ -199,7 +215,7 @@ describe("buildStoreReport", () => {
     const report = buildStoreReport(store);
     expect(report).toMatchObject({
       total: 3,
-      savedViewCount: 0,
+      savedViewCount: 2,
       enabled: 2,
       disabled: 1,
       withSnapshots: 2,
@@ -237,6 +253,17 @@ describe("buildWorkflowActionQueue", () => {
     expect(queue.itemCount).toBeGreaterThan(0);
     expect(queue.items.some((item) => item.category === "opportunity" || item.category === "alert")).toBe(true);
     expect(queue.actionSummary.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildSavedViewDashboard", () => {
+  it("summarizes saved views with current hotness and next actions", () => {
+    const dashboard = buildSavedViewDashboard(store, { limit: 5, severity: "medium" });
+    expect(dashboard.savedViewCount).toBe(2);
+    expect(dashboard.populatedViewCount).toBeGreaterThan(0);
+    expect(dashboard.views[0]?.name).toBe("GPU alerts");
+    expect(dashboard.views[0]?.nextAction).toBeTruthy();
+    expect(dashboard.actionSummary.length).toBeGreaterThan(0);
   });
 });
 

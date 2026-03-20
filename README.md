@@ -93,6 +93,7 @@ agents: {
           "deal_saved_view_create",
           "deal_saved_view_update",
           "deal_saved_view_run",
+          "deal_saved_view_dashboard",
           "deal_saved_view_delete",
           "deal_view_scan",
           "deal_view_report",
@@ -155,6 +156,7 @@ agents: {
 | `deal_watch_taxonomy` | Summarize groups, tags, organization gaps, and suggested saved views for larger watchlists. |
 | `deal_host_report` | Summarize watches by host with signal density, alert load, and cadence recommendations. |
 | `deal_saved_view_list` | List saved watch search views and their current match counts. |
+| `deal_saved_view_dashboard` | Summarize all saved views at a glance with top alerts, best opportunities, and next actions. |
 | `deal_saved_view_create` | Save a reusable watch search/filter view for larger watchlists. |
 | `deal_saved_view_update` | Rename or retarget an existing saved view. |
 | `deal_saved_view_run` | Run a saved view and return the current matching watches. |
@@ -223,8 +225,9 @@ Recommended first-run workflow:
 8. `deal_watch_taxonomy` once the list grows so you can see the dominant groups, tags, and best candidate saved views.
 9. `deal_host_report` when you want a retailer-level view of watch density, active signals, and cadence pressure.
 10. `deal_saved_view_create` once you have a search you expect to reuse, like "GPU alerts" or "disabled watches with snapshots".
-11. `deal_saved_view_update` once you know which saved slices actually deserve their own workflow.
-12. `deal_watch_tag`, `deal_watch_bulk_update`, or `deal_view_bulk_update` to organize watches into tags and groups as the list grows.
+11. `deal_saved_view_dashboard` when you want to see which saved views are hot, empty, noisy, or action-worthy without opening each one.
+12. `deal_saved_view_update` once you know which saved slices actually deserve their own workflow.
+13. `deal_watch_tag`, `deal_watch_bulk_update`, or `deal_view_bulk_update` to organize watches into tags and groups as the list grows.
 13. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
 14. `deal_scan` with `commit: true` to capture snapshots, then `deal_view_scan` when you want to scan only one saved slice.
 15. `deal_view_report`, `deal_digest`, `deal_workflow_action_queue`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.

@@ -25,6 +25,7 @@ import {
   buildProductGroupsSummary,
   buildQuickstartGuide,
   buildScheduleAdvice,
+  buildSavedViewDashboard,
   buildSampleSetup,
   buildStoreReport,
   buildTaxonomySummary,
@@ -980,6 +981,30 @@ export function registerDealTools(api: OpenClawPluginApi): void {
 
   api.registerTool(
     {
+      name: "deal_saved_view_dashboard",
+      label: "Deal Hunter",
+      description: "Summarize all saved views at a glance, including current match counts, hottest alerts, best opportunities, and the next recommended action.",
+      parameters: Type.Object({
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+        severity: Type.Optional(Type.Union([
+          Type.Literal("low"),
+          Type.Literal("medium"),
+          Type.Literal("high"),
+        ])),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        return jsonResult(buildSavedViewDashboard(store, {
+          limit: params.limit ?? 10,
+          severity: params.severity ?? "medium",
+        }));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
       name: "deal_saved_view_create",
       label: "Deal Hunter",
       description: "Persist a reusable watch search/filter view for larger watchlists.",
@@ -1720,6 +1745,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_saved_view_create",
               "deal_saved_view_update",
               "deal_saved_view_run",
+              "deal_saved_view_dashboard",
               "deal_saved_view_delete",
               "deal_view_scan",
               "deal_view_report",
@@ -1769,6 +1795,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_host_report",
               "deal_saved_view_list",
               "deal_saved_view_run",
+              "deal_saved_view_dashboard",
               "deal_view_scan",
               "deal_view_report",
               "deal_watch_export",
