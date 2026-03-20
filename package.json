@@ -56,6 +56,13 @@
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
   },
+  "overrides": {
+    "@hono/node-server": "^1.19.11",
+    "fast-xml-parser": "^5.5.8",
+    "@mariozechner/pi-ai": "^0.61.0",
+    "@mariozechner/pi-agent-core": "^0.61.0",
+    "@mariozechner/pi-coding-agent": "^0.61.0"
+  },
   "engines": {
     "node": ">=20"
   },
