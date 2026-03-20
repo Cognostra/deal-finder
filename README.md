@@ -289,6 +289,8 @@ OPENCLAW_TEST_STATE_DIR="$HOME/.openclaw" ./scripts/openclaw-test-cli.sh ...
 ```bash
 npm run build
 npm test
+npm run audit:prod
+npm run audit:full
 npm run release:verify
 ```
 
@@ -301,6 +303,8 @@ npm run test:diagnose
 That command prints the active `node` resolution and then runs Vitest with the `hanging-process` reporter under a real-Node-first `PATH`. This matters on systems where `node` is aliased or symlinked to Bun.
 
 `npm run release:verify` builds a real tarball, installs it into a fresh temporary OpenClaw state using the local `openclaw/` source checkout, and lists plugins to confirm the package installs cleanly as an archive.
+
+`npm run audit:prod` checks the published runtime dependency tree only. `npm run audit:full` includes dev dependencies as well, which is useful for tracking issues inherited from the local OpenClaw test harness and other development-only tooling.
 
 ## License
 

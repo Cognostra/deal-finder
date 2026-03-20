@@ -18,6 +18,8 @@
     "README.md"
   ],
   "scripts": {
+    "audit:full": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm audit",
+    "audit:prod": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm audit --omit=dev",
     "build": "rm -rf dist && tsc",
     "pack:check": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm pack --dry-run",
     "publish:dry-run": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm publish --dry-run",
@@ -46,13 +48,13 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.48",
-    "undici": "^7.24.0"
+    "undici": "^7.24.5"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^25.5.0",
     "openclaw": "2026.3.13",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
   },
   "engines": {
     "node": ">=20"
