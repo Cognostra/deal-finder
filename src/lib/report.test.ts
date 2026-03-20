@@ -56,6 +56,58 @@ const store: StoreFile = {
       enabled: false,
       createdAt: "2026-03-20T00:00:00.000Z",
     },
+    {
+      id: "watch-3",
+      url: "http://shop.test/c",
+      label: "GPU",
+      enabled: true,
+      maxPrice: 100,
+      createdAt: "2026-03-20T01:00:00.000Z",
+      lastSnapshot: {
+        title: "GPU",
+        canonicalTitle: "gpu",
+        price: 0.01,
+        currency: "USD",
+        fetchedAt: "2026-03-21T00:00:00.000Z",
+        rawSnippet: "flash sale",
+      },
+      history: [
+        {
+          fetchedAt: "2026-03-18T00:00:00.000Z",
+          price: 150,
+          currency: "USD",
+          canonicalTitle: "gpu",
+          changeType: "first_seen",
+          alertSeverity: "none",
+        },
+        {
+          fetchedAt: "2026-03-19T00:00:00.000Z",
+          price: 120,
+          currency: "USD",
+          canonicalTitle: "gpu",
+          changeType: "price_drop",
+          alertSeverity: "medium",
+        },
+        {
+          fetchedAt: "2026-03-20T00:00:00.000Z",
+          price: 145,
+          currency: "USD",
+          canonicalTitle: "gpu",
+          changeType: "price_increase",
+          alertSeverity: "low",
+        },
+        {
+          fetchedAt: "2026-03-21T00:00:00.000Z",
+          price: 0.01,
+          currency: "USD",
+          canonicalTitle: "gpu",
+          changeType: "price_drop",
+          alertSeverity: "high",
+          alerts: ["possible_price_glitch"],
+          summaryLine: "GPU: 0.01 USD; price dropped; high alert",
+        },
+      ],
+    },
   ],
 };
 
@@ -78,15 +130,21 @@ describe("buildStoreReport", () => {
   it("summarizes watch counts and signal-heavy watches", () => {
     const report = buildStoreReport(store);
     expect(report).toMatchObject({
-      total: 2,
-      enabled: 1,
+      total: 3,
+      enabled: 2,
       disabled: 1,
-      withSnapshots: 1,
-      withHistory: 1,
-      withSignals: 1,
+      withSnapshots: 2,
+      withHistory: 2,
+      withSignals: 2,
     });
     expect(report.topSignals[0]?.watchId).toBe("watch-1");
-    expect(report.priceLeaders[0]?.watchId).toBe("watch-1");
+    expect(report.priceLeaders[0]?.watchId).toBe("watch-3");
+    expect(report.recentChanges[0]?.watchId).toBe("watch-3");
+    expect(report.noisyWatches[0]?.watchId).toBe("watch-3");
+    expect(report.glitchCandidates[0]).toMatchObject({
+      watchId: "watch-3",
+      glitchScore: 95,
+    });
   });
 });
 
@@ -95,8 +153,8 @@ describe("buildHealthSummary", () => {
     const health = buildHealthSummary(store, cfg, cfg.storePath);
     expect(health).toMatchObject({
       storePath: "/tmp/store.json",
-      watchCount: 2,
-      enabledCount: 1,
+      watchCount: 3,
+      enabledCount: 2,
       fetcher: "local",
       blockedHostsConfigured: true,
       allowedHostsConfigured: false,
@@ -142,8 +200,14 @@ describe("buildHistorySummary", () => {
 describe("buildAlertsSummary", () => {
   it("surfaces watches with active signals or recent high-severity history", () => {
     const alerts = buildAlertsSummary(store, "medium");
-    expect(alerts.count).toBe(1);
+    expect(alerts.count).toBe(2);
     expect(alerts.alerts[0]).toMatchObject({
+      watchId: "watch-3",
+      severity: "high",
+      latestPrice: 0.01,
+      glitchScore: 95,
+    });
+    expect(alerts.alerts[1]).toMatchObject({
       watchId: "watch-1",
       severity: "high",
       latestPrice: 15,

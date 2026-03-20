@@ -111,7 +111,7 @@ agents: {
 | `deal_fetch_url` | One-off capped fetch + heuristic extraction. |
 | `deal_evaluate_text` | Score pasted text for “freebie / glitchy” wording (no network). |
 | `deal_help` | Show install, tool, cron, and safety guidance from inside OpenClaw. |
-| `deal_report` | Summarize the current watchlist, snapshots, and signal-heavy watches. |
+| `deal_report` | Summarize the watchlist, price leaders, recent changes, noisy watches, and glitch candidates. |
 | `deal_health` | Show configuration, storage, safety posture, and operational recommendations. |
 | `deal_history` | Show per-watch price history, recent deltas, and lowest/highest seen prices. |
 | `deal_alerts` | Rank current threshold, keyword, and recent high-severity watch signals. |
@@ -148,6 +148,14 @@ Committed scans now build bounded per-watch history so the plugin can report:
 - highest seen price
 - latest price delta
 - recent alert-bearing changes
+
+`deal_report` now also highlights:
+
+- `recentChanges` for the latest committed movements across the watchlist
+- `noisyWatches` for products whose recent history looks unusually volatile
+- `glitchCandidates` for near-zero or extreme-drop cases worth manual review
+
+`deal_alerts` now includes `glitchScore` and `glitchReasons` so small models can distinguish normal threshold hits from suspicious freebie-like results.
 
 Network guardrails:
 

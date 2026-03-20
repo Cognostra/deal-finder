@@ -32,6 +32,7 @@ function summarizeHistory(watch: Watch) {
       : undefined;
 
   return {
+    history,
     historyCount: history.length,
     latestEntry: latest,
     previousEntry: previous,
@@ -41,6 +42,114 @@ function summarizeHistory(watch: Watch) {
     lastSeenAt: latest?.fetchedAt,
     priceDelta,
     percentDelta,
+  };
+}
+
+function buildGlitchAssessment(
+  watch: Watch,
+  history: ReturnType<typeof summarizeHistory>,
+  signals: string[],
+): { score: number; reasons: string[] } {
+  const reasons: string[] = [];
+  let score = 0;
+  const latest = history.latestEntry;
+  const previous = history.previousEntry;
+
+  if (latest?.alerts?.includes("possible_price_glitch")) {
+    score = Math.max(score, 95);
+    reasons.push("Latest committed alert flagged a possible price glitch.");
+  }
+
+  if (latest?.price != null && latest.price <= 0.01 && previous?.price != null && previous.price >= 5) {
+    score = Math.max(score, 95);
+    reasons.push("Latest observed price is near zero after a normal previous price.");
+  }
+
+  if (history.percentDelta != null && history.percentDelta <= -90) {
+    score = Math.max(score, 80);
+    reasons.push(`Latest price drop was ${Math.abs(history.percentDelta).toFixed(1)}%.`);
+  }
+
+  if (
+    latest?.price != null &&
+    history.highestSeenPrice != null &&
+    latest.price > 0 &&
+    history.highestSeenPrice / latest.price >= 20
+  ) {
+    score = Math.max(score, 70);
+    reasons.push("Historical peak price is far above the latest observed price.");
+  }
+
+  if (signals.some((signal) => signal.startsWith("max_price_hit:")) && latest?.price != null && latest.price < 1) {
+    score = Math.max(score, 60);
+    reasons.push("Current max-price hit is unusually close to zero.");
+  }
+
+  return { score, reasons };
+}
+
+function buildNoiseAssessment(
+  watch: Watch,
+  history: ReturnType<typeof summarizeHistory>,
+): { score: number; reasons: string[]; pricePointCount: number } {
+  const entries = history.history.slice(-8);
+  const reasons: string[] = [];
+  const pricePoints = entries
+    .map((entry) => entry.price)
+    .filter((price): price is number => price != null);
+  const uniquePrices = new Set(pricePoints.map((price) => price.toFixed(2)));
+  const directionSigns: number[] = [];
+
+  for (let i = 1; i < pricePoints.length; i += 1) {
+    const delta = pricePoints[i]! - pricePoints[i - 1]!;
+    if (delta !== 0) {
+      directionSigns.push(delta > 0 ? 1 : -1);
+    }
+  }
+
+  let directionChanges = 0;
+  for (let i = 1; i < directionSigns.length; i += 1) {
+    if (directionSigns[i] !== directionSigns[i - 1]) {
+      directionChanges += 1;
+    }
+  }
+
+  let score = 0;
+  if (entries.length >= 4) {
+    score += Math.min(30, entries.length * 4);
+    reasons.push("Watch has several committed history points.");
+  }
+  if (uniquePrices.size >= 4) {
+    score += 25;
+    reasons.push("Watch has moved across many distinct price points.");
+  }
+  if (directionChanges >= 1) {
+    score += directionChanges * 20;
+    reasons.push("Price direction flipped across recent history.");
+  }
+  const contentChanges = entries.filter((entry) => entry.changeType === "content_changed").length;
+  if (contentChanges >= 2) {
+    score += 15;
+    reasons.push("Content changed repeatedly without a stable pricing pattern.");
+  }
+  if (
+    history.lowestSeenPrice != null &&
+    history.highestSeenPrice != null &&
+    history.lowestSeenPrice > 0 &&
+    ((history.highestSeenPrice - history.lowestSeenPrice) / history.lowestSeenPrice) * 100 >= 40
+  ) {
+    score += 20;
+    reasons.push("Observed price range is wide relative to the low price.");
+  }
+
+  if (!watch.enabled) {
+    score = Math.max(0, score - 10);
+  }
+
+  return {
+    score: Math.min(100, score),
+    reasons,
+    pricePointCount: uniquePrices.size,
   };
 }
 
@@ -59,6 +168,37 @@ export function buildStoreReport(store: StoreFile): {
     latestPrice?: number;
     lowestSeenPrice?: number;
     historyCount: number;
+  }>;
+  recentChanges: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    fetchedAt: string;
+    changeType?: string;
+    alertSeverity?: AlertSeverity;
+    summaryLine?: string;
+    price?: number;
+    currency?: string;
+  }>;
+  noisyWatches: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    noiseScore: number;
+    reason: string;
+    historyCount: number;
+    pricePointCount: number;
+    lastSeenAt?: string;
+  }>;
+  glitchCandidates: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    glitchScore: number;
+    reasons: string[];
+    latestPrice?: number;
+    previousPrice?: number;
+    lastSeenAt?: string;
   }>;
 } {
   const watches = store.watches;
@@ -92,6 +232,65 @@ export function buildStoreReport(store: StoreFile): {
         (b.historyCount - a.historyCount),
     )
     .slice(0, 10);
+  const recentChanges = watches
+    .flatMap((watch) =>
+      getHistoryEntries(watch).map((entry) => ({
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        fetchedAt: entry.fetchedAt,
+        changeType: entry.changeType,
+        alertSeverity: entry.alertSeverity,
+        summaryLine: entry.summaryLine,
+        price: entry.price,
+        currency: entry.currency,
+      })),
+    )
+    .sort((a, b) => b.fetchedAt.localeCompare(a.fetchedAt))
+    .slice(0, 15);
+  const noisyWatches = watches
+    .map((watch) => {
+      const history = summarizeHistory(watch);
+      const noise = buildNoiseAssessment(watch, history);
+      if (noise.score < 45) {
+        return null;
+      }
+      return {
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        noiseScore: noise.score,
+        reason: noise.reasons[0] ?? "Recent history is unusually volatile.",
+        historyCount: history.historyCount,
+        pricePointCount: noise.pricePointCount,
+        lastSeenAt: history.lastSeenAt,
+      };
+    })
+    .filter((watch): watch is NonNullable<typeof watch> => Boolean(watch))
+    .sort((a, b) => b.noiseScore - a.noiseScore || (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? ""))
+    .slice(0, 10);
+  const glitchCandidates = watches
+    .map((watch) => {
+      const history = summarizeHistory(watch);
+      const signals = buildWatchSignals(watch);
+      const glitch = buildGlitchAssessment(watch, history, signals);
+      if (glitch.score < 60) {
+        return null;
+      }
+      return {
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        glitchScore: glitch.score,
+        reasons: glitch.reasons,
+        latestPrice: history.latestEntry?.price ?? watch.lastSnapshot?.price,
+        previousPrice: history.previousEntry?.price,
+        lastSeenAt: history.lastSeenAt,
+      };
+    })
+    .filter((watch): watch is NonNullable<typeof watch> => Boolean(watch))
+    .sort((a, b) => b.glitchScore - a.glitchScore || (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? ""))
+    .slice(0, 10);
 
   return {
     total: watches.length,
@@ -102,6 +301,9 @@ export function buildStoreReport(store: StoreFile): {
     withSignals: topSignals.length,
     topSignals,
     priceLeaders,
+    recentChanges,
+    noisyWatches,
+    glitchCandidates,
   };
 }
 
@@ -312,12 +514,15 @@ export function buildAlertsSummary(
     priceDelta?: number;
     percentDelta?: number;
     lastSeenAt?: string;
+    glitchScore: number;
+    glitchReasons: string[];
   }>;
 } {
   const alerts = store.watches
     .map((watch) => {
       const signals = buildWatchSignals(watch);
       const history = summarizeHistory(watch);
+      const glitch = buildGlitchAssessment(watch, history, signals);
       const latestSeverity = history.latestEntry?.alertSeverity ?? "none";
       const derivedSeverity =
         signals.length > 0 && compareSeverity(latestSeverity, "medium") < 0 ? "medium" : latestSeverity;
@@ -337,12 +542,15 @@ export function buildAlertsSummary(
         priceDelta: history.priceDelta,
         percentDelta: history.percentDelta,
         lastSeenAt: history.lastSeenAt,
+        glitchScore: glitch.score,
+        glitchReasons: glitch.reasons,
       };
     })
     .filter((watch): watch is NonNullable<typeof watch> => Boolean(watch))
     .sort(
       (a, b) =>
         compareSeverity(b.severity, a.severity) ||
+        (b.glitchScore - a.glitchScore) ||
         (Math.abs(b.percentDelta ?? 0) - Math.abs(a.percentDelta ?? 0)) ||
         a.url.localeCompare(b.url),
     )
