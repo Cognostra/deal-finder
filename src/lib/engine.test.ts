@@ -127,7 +127,30 @@ describe("runScan", () => {
     expect(result.summaryLine).toContain("first snapshot");
     expect(result.fetchSource).toBe("node_http");
     expect(result.fetchSourceNote).toContain("Node engine");
+    expect(result.responseTruncated).toBe(false);
     expect(result.after?.canonicalTitle).toBe("poetry book");
+  });
+
+  it("surfaces truncation in scan results and committed snapshots", async () => {
+    const text = `<meta property="og:title" content="Long Page" /><p>$50.00</p>`;
+    cappedFetchMock.mockResolvedValue({
+      meta: { status: 200, finalUrl: "http://shop.test/item", bytesRead: 4, truncated: true },
+      text,
+    });
+
+    const [result] = await runScan({
+      api: makeApi(),
+      cfg: makeConfig(),
+      store: makeStore(),
+      storePath: "/tmp/unused.json",
+      commit: false,
+    });
+
+    expect(result.responseTruncated).toBe(true);
+    expect(result.summaryLine).toContain("response hit byte cap");
+    expect(result.extractionConfidence.reasons).toContain("Response hit the configured byte cap; extraction may be incomplete.");
+    expect(result.after?.responseTruncated).toBe(true);
+    expect(result.after?.responseBytes).toBe(4);
   });
 
   it("flags percent drops and price glitches", async () => {
@@ -437,6 +460,7 @@ describe("mergeCommittedScanResults", () => {
           url: "http://shop.test/old",
           fetchSource: "node_http",
           fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+          responseTruncated: false,
           ok: true,
           changed: true,
           changeType: "first_seen",
@@ -477,6 +501,7 @@ describe("mergeCommittedScanResults", () => {
           url: "http://shop.test/item",
           fetchSource: "node_http",
           fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+          responseTruncated: false,
           ok: true,
           changed: true,
           changeType: "first_seen",

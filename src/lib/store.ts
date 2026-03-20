@@ -12,6 +12,7 @@ import type {
   Watch,
   WatchHistoryEntry,
   WatchImportSource,
+  WatchSnapshot,
   WatchSelector,
 } from "../types.js";
 
@@ -741,6 +742,9 @@ function expectOptionalLastSnapshot(value: unknown): Watch["lastSnapshot"] {
     contentHash: expectOptionalString(obj.contentHash, "lastSnapshot.contentHash"),
     fetchedAt,
     rawSnippet: expectOptionalString(obj.rawSnippet, "lastSnapshot.rawSnippet"),
+    fetchSource: expectOptionalString(obj.fetchSource, "lastSnapshot.fetchSource") as WatchSnapshot["fetchSource"],
+    responseBytes: expectOptionalNumber(obj.responseBytes, "lastSnapshot.responseBytes"),
+    responseTruncated: expectOptionalBoolean(obj.responseTruncated, "lastSnapshot.responseTruncated"),
     reviewedFields: expectOptionalReviewedFields(obj.reviewedFields),
   };
 }

@@ -79,6 +79,9 @@ export type WatchSnapshot = {
   contentHash?: string;
   fetchedAt: string;
   rawSnippet?: string;
+  fetchSource?: FetchSource;
+  responseBytes?: number;
+  responseTruncated?: boolean;
   reviewedFields?: ReviewedSnapshotField[];
 };
 
@@ -215,6 +218,7 @@ export type FetchMeta = {
   status: number;
   finalUrl: string;
   bytesRead: number;
+  truncated?: boolean;
   etag?: string;
   lastModified?: string;
   notModified?: boolean;
@@ -298,6 +302,7 @@ export type ScanResultItem = {
   url: string;
   fetchSource: FetchSource;
   fetchSourceNote: string;
+  responseTruncated: boolean;
   ok: boolean;
   error?: string;
   changed: boolean;

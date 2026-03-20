@@ -53,6 +53,7 @@ function buildAlerts(w: Watch, prev: WatchSnapshot | undefined, next: WatchSnaps
 function snapshotFromExtracted(
   extracted: ReturnType<typeof extractListing>,
   meta: import("../types.js").FetchMeta,
+  fetchSource: FetchSource,
   prev?: WatchSnapshot,
 ): WatchSnapshot {
   const rawSnippet = extracted.snippet?.slice(0, 2000);
@@ -73,6 +74,9 @@ function snapshotFromExtracted(
     contentHash,
     fetchedAt: new Date().toISOString(),
     rawSnippet,
+    fetchSource,
+    responseBytes: meta.bytesRead,
+    responseTruncated: meta.truncated ?? false,
   };
 }
 
@@ -141,6 +145,10 @@ function buildExtractionConfidence(args: {
   } else if (snippet && score === 0) {
     score += 15;
     reasons.push("Only snippet evidence was available.");
+  }
+
+  if (meta?.truncated) {
+    reasons.push("Response hit the configured byte cap; extraction may be incomplete.");
   }
 
   const bounded = Math.min(100, score);
@@ -295,8 +303,9 @@ function buildSummaryLine(args: {
   after?: WatchSnapshot;
   priceDelta?: number;
   percentDelta?: number;
+  meta?: FetchMeta;
 }): string {
-  const { label, url, ok, error, changeType, alertSeverity, confidence, before, after, priceDelta, percentDelta } =
+  const { label, url, ok, error, changeType, alertSeverity, confidence, before, after, priceDelta, percentDelta, meta } =
     args;
   const subject = label?.trim() || after?.title || before?.title || url;
 
@@ -335,6 +344,9 @@ function buildSummaryLine(args: {
   }
   if (confidence.level === "low" || confidence.level === "none") {
     parts.push(`parse confidence ${confidence.level}`);
+  }
+  if (meta?.truncated) {
+    parts.push("response hit byte cap");
   }
 
   return parts.join("; ");
@@ -394,6 +406,7 @@ function finalizeResult(args: {
     after,
     priceDelta,
     percentDelta,
+    meta,
   });
 
   return {
@@ -402,6 +415,7 @@ function finalizeResult(args: {
     url,
     fetchSource,
     fetchSourceNote,
+    responseTruncated: meta?.truncated ?? false,
     ok,
     error,
     changed: classification.changed,
@@ -497,7 +511,7 @@ async function scanOneWatch(
     const extracted = extractListing(text);
     parseMs = performance.now() - tp;
 
-    const after = snapshotFromExtracted(extracted, meta, before);
+    const after = snapshotFromExtracted(extracted, meta, fetchSource, before);
     const alerts = buildAlerts(w, before, after);
 
     const total = performance.now() - t0;

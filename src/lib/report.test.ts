@@ -27,6 +27,7 @@ import {
   buildWorkflowTriage,
   buildWatchIdentitySummary,
   buildWatchInsights,
+  buildWatchProvenanceSummary,
 } from "./report.js";
 
 const store: StoreFile = {
@@ -50,6 +51,20 @@ const store: StoreFile = {
         currency: "USD",
         fetchedAt: "2026-03-19T00:00:00.000Z",
         rawSnippet: "rare sale",
+        fetchSource: "node_http",
+        responseBytes: 128,
+        responseTruncated: true,
+        reviewedFields: [
+          {
+            field: "title",
+            originalValue: "Old Rare Book",
+            reviewedValue: "Rare Book",
+            reviewSource: "deal_llm_review_apply",
+            reviewedAt: "2026-03-19T01:00:00.000Z",
+            provider: "ollama",
+            model: "qwen2.5:1.5b",
+          },
+        ],
       },
       history: [
         {
@@ -77,6 +92,14 @@ const store: StoreFile = {
       label: "Desk",
       enabled: false,
       createdAt: "2026-03-20T00:00:00.000Z",
+      importSource: {
+        type: "discovery",
+        importedAt: "2026-03-19T12:00:00.000Z",
+        discoveryProvider: "manual",
+        sourceWatchId: "watch-1",
+        sourceWatchUrl: "http://shop.test/a",
+        candidateUrl: "http://shop.test/c",
+      },
     },
     {
       id: "watch-3",
@@ -199,6 +222,9 @@ describe("buildHealthSummary", () => {
       storePath: "/tmp/store.json",
       watchCount: 3,
       enabledCount: 2,
+      importedWatchCount: 1,
+      reviewedSnapshotCount: 1,
+      truncatedSnapshotCount: 1,
       fetcher: "local",
       discoveryEnabled: false,
       discoveryProvider: "off",
@@ -217,6 +243,21 @@ describe("buildDoctorSummary", () => {
     expect(doctor.recommendedCommands).toContain("deal_help");
     expect(doctor.recommendedCommands).toContain("deal_discovery_policy");
     expect(doctor.recommendedCommands).toContain("deal_review_policy");
+  });
+});
+
+describe("buildWatchProvenanceSummary", () => {
+  it("summarizes import origin, review provenance, and truncation warnings", () => {
+    const summary = buildWatchProvenanceSummary(store.watches[0]!);
+    expect(summary.origin).toMatchObject({
+      type: "manual",
+    });
+    expect(summary.lastSnapshot).toMatchObject({
+      fetchSource: "node_http",
+      responseTruncated: true,
+      reviewedFieldCount: 1,
+    });
+    expect(summary.provenanceNotes.some((note) => note.includes("byte cap"))).toBe(true);
   });
 });
 

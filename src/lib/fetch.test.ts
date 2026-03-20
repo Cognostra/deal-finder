@@ -182,6 +182,7 @@ describe("cappedFetch", () => {
 
     expect(result.text).toBe("abcd");
     expect(result.meta.bytesRead).toBe(4);
+    expect(result.meta.truncated).toBe(true);
   });
 
   it("forwards conditional request headers", async () => {
@@ -237,5 +238,16 @@ describe("cappedFetch", () => {
     expect(result.text).toBe("ok");
     expect(result.meta.status).toBe(200);
     expect(getDispatcherCacheSizeForTests()).toBe(0);
+  });
+
+  it("applies the byte cap to Firecrawl responses too", async () => {
+    mocks.lookupMock.mockResolvedValue([{ address: "93.184.216.34" }]);
+    mocks.firecrawlMock.mockResolvedValue({ ok: true, bodyText: "abcdef", status: 200 });
+
+    const result = await cappedFetch("http://public.test/item", makeConfig({ fetcher: "firecrawl", maxBytesPerResponse: 4 }));
+
+    expect(result.text).toBe("abcd");
+    expect(result.meta.bytesRead).toBe(4);
+    expect(result.meta.truncated).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import type { ResolvedDealConfig } from "../config.js";
-import type { AlertSeverity, DiscoveryCandidate, LlmReviewCandidate, ProductIdentityEntry, ProductIdentityField, StoreFile, Watch, WatchHistoryEntry } from "../types.js";
+import type { AlertSeverity, DiscoveryCandidate, FetchSource, LlmReviewCandidate, ProductIdentityEntry, ProductIdentityField, ReviewedSnapshotField, StoreFile, Watch, WatchHistoryEntry, WatchImportSource } from "../types.js";
 import { buildProductGroups, buildProductMatchCandidates, getWatchHost, getWatchIdentityFields, getWatchIdentityStrength } from "./product-identity.js";
 import { canonicalizeWatchUrl } from "./url-policy.js";
 import { buildWatchSignals } from "./watch-view.js";
@@ -124,6 +124,57 @@ function summarizeHistory(watch: Watch) {
     priceDelta,
     percentDelta,
   };
+}
+
+function summarizeImportSource(source: WatchImportSource | undefined): {
+  type: "manual" | "url_import" | "discovery_import";
+  summary: string;
+  importedAt?: string;
+} {
+  if (!source) {
+    return {
+      type: "manual",
+      summary: "Watch was created directly in this store.",
+    };
+  }
+  if (source.type === "url") {
+    return {
+      type: "url_import",
+      importedAt: source.importedAt,
+      summary: `Watch was imported from a remote or exported watchlist URL on ${source.importedAt}.`,
+    };
+  }
+  return {
+    type: "discovery_import",
+    importedAt: source.importedAt,
+    summary: `Watch was imported from discovery candidate ${source.candidateUrl} using ${source.discoveryProvider}.`,
+  };
+}
+
+function summarizeReviewedFields(reviewedFields: ReviewedSnapshotField[] | undefined): {
+  count: number;
+  fields: string[];
+  lastReviewedAt?: string;
+  reviewSources: string[];
+  providerModels: string[];
+} {
+  const entries = reviewedFields ?? [];
+  const providerModels = [...new Set(entries.map((entry) => [entry.provider, entry.model].filter(Boolean).join("/")).filter(Boolean))].sort();
+  const reviewSources = [...new Set(entries.map((entry) => entry.reviewSource).filter(Boolean))].sort();
+  const lastReviewedAt = [...entries.map((entry) => entry.reviewedAt).filter(Boolean)].sort().at(-1);
+  return {
+    count: entries.length,
+    fields: entries.map((entry) => entry.field),
+    lastReviewedAt,
+    reviewSources,
+    providerModels,
+  };
+}
+
+function describeFetchSource(source: FetchSource | undefined): string | undefined {
+  if (source === "firecrawl") return "Firecrawl";
+  if (source === "node_http") return "Node HTTP";
+  return undefined;
 }
 
 function buildGlitchAssessment(
@@ -394,6 +445,10 @@ export function buildHealthSummary(store: StoreFile, cfg: ResolvedDealConfig, st
   storePath: string;
   watchCount: number;
   enabledCount: number;
+  importedWatchCount: number;
+  discoveryImportedCount: number;
+  reviewedSnapshotCount: number;
+  truncatedSnapshotCount: number;
   fetcher: ResolvedDealConfig["fetcher"];
   discoveryEnabled: boolean;
   discoveryProvider: ResolvedDealConfig["discovery"]["provider"];
@@ -436,11 +491,18 @@ export function buildHealthSummary(store: StoreFile, cfg: ResolvedDealConfig, st
   if (cfg.llmReview.mode === "auto_assist") {
     recommendations.push("Review deal_review_policy so automatic low-confidence review stays within your intended budget and rewrite rules.");
   }
+  if (store.watches.some((watch) => watch.lastSnapshot?.responseTruncated)) {
+    recommendations.push("Some committed snapshots hit the response byte cap. Use deal_watch_provenance or raise maxBytesPerResponse if extraction looks incomplete.");
+  }
 
   return {
     storePath,
     watchCount: store.watches.length,
     enabledCount: store.watches.filter((watch) => watch.enabled).length,
+    importedWatchCount: store.watches.filter((watch) => Boolean(watch.importSource)).length,
+    discoveryImportedCount: store.watches.filter((watch) => watch.importSource?.type === "discovery").length,
+    reviewedSnapshotCount: store.watches.filter((watch) => Boolean(watch.lastSnapshot?.reviewedFields?.length)).length,
+    truncatedSnapshotCount: store.watches.filter((watch) => Boolean(watch.lastSnapshot?.responseTruncated)).length,
     fetcher: cfg.fetcher,
     discoveryEnabled: cfg.discovery.enabled,
     discoveryProvider: cfg.discovery.provider,
@@ -539,6 +601,14 @@ export function buildDoctorSummary(store: StoreFile, cfg: ResolvedDealConfig, st
     });
   }
 
+  if (store.watches.some((watch) => watch.lastSnapshot?.responseTruncated)) {
+    issues.push({
+      severity: "info",
+      code: "truncated_snapshots_present",
+      message: "Some committed snapshots hit the configured byte cap. Use deal_watch_provenance or deal_extraction_debug to inspect whether extraction is incomplete.",
+    });
+  }
+
   if (issues.length === 0) {
     issues.push({
       severity: "info",
@@ -554,6 +624,7 @@ export function buildDoctorSummary(store: StoreFile, cfg: ResolvedDealConfig, st
     recommendedCommands: [
       "deal_help",
       "deal_watch_search",
+      "deal_watch_provenance",
       "deal_discovery_policy",
       "deal_review_policy",
       "deal_report",
@@ -1167,6 +1238,86 @@ export function buildWatchIdentitySummary(
     strength: identityStrength.strength,
     reasons,
     relatedWatches,
+  };
+}
+
+export function buildWatchProvenanceSummary(
+  watch: Watch,
+): {
+  watchId: string;
+  label?: string;
+  url: string;
+  createdAt: string;
+  enabled: boolean;
+  origin: ReturnType<typeof summarizeImportSource>;
+  history: {
+    count: number;
+    firstSeenAt?: string;
+    lastSeenAt?: string;
+  };
+  lastSnapshot: null | {
+    fetchedAt: string;
+    title?: string;
+    price?: number;
+    currency?: string;
+    fetchSource?: FetchSource;
+    fetchSourceLabel?: string;
+    responseBytes?: number;
+    responseTruncated: boolean;
+    reviewedFieldCount: number;
+    reviewedFields: string[];
+    lastReviewedAt?: string;
+    reviewSources: string[];
+    providerModels: string[];
+  };
+  provenanceNotes: string[];
+} {
+  const history = summarizeHistory(watch);
+  const origin = summarizeImportSource(watch.importSource);
+  const reviewed = summarizeReviewedFields(watch.lastSnapshot?.reviewedFields);
+  const lastSnapshot = watch.lastSnapshot
+    ? {
+        fetchedAt: watch.lastSnapshot.fetchedAt,
+        title: watch.lastSnapshot.title,
+        price: watch.lastSnapshot.price,
+        currency: watch.lastSnapshot.currency,
+        fetchSource: watch.lastSnapshot.fetchSource,
+        fetchSourceLabel: describeFetchSource(watch.lastSnapshot.fetchSource),
+        responseBytes: watch.lastSnapshot.responseBytes,
+        responseTruncated: watch.lastSnapshot.responseTruncated ?? false,
+        reviewedFieldCount: reviewed.count,
+        reviewedFields: reviewed.fields,
+        lastReviewedAt: reviewed.lastReviewedAt,
+        reviewSources: reviewed.reviewSources,
+        providerModels: reviewed.providerModels,
+      }
+    : null;
+
+  const provenanceNotes: string[] = [origin.summary];
+  if (watch.lastSnapshot?.responseTruncated) {
+    provenanceNotes.push("Latest committed snapshot hit the configured byte cap; extracted fields may be incomplete.");
+  }
+  if (reviewed.count > 0) {
+    provenanceNotes.push(`Latest committed snapshot contains ${reviewed.count} reviewed field${reviewed.count === 1 ? "" : "s"}.`);
+  }
+  if (!watch.lastSnapshot) {
+    provenanceNotes.push("This watch has no committed snapshot yet.");
+  }
+
+  return {
+    watchId: watch.id,
+    label: watch.label,
+    url: watch.url,
+    createdAt: watch.createdAt,
+    enabled: watch.enabled,
+    origin,
+    history: {
+      count: history.historyCount,
+      firstSeenAt: history.firstSeenAt,
+      lastSeenAt: history.lastSeenAt,
+    },
+    lastSnapshot,
+    provenanceNotes,
   };
 }
 

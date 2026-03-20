@@ -246,6 +246,7 @@ describe("store", () => {
       url: watch.url,
       fetchSource: "node_http",
       fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+      responseTruncated: false,
       ok: true,
       changed: true,
       changeType: "first_seen",
@@ -276,6 +277,7 @@ describe("store", () => {
       url: watch.url,
       fetchSource: "node_http",
       fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+      responseTruncated: false,
       ok: true,
       changed: false,
       changeType: "unchanged",
@@ -306,6 +308,7 @@ describe("store", () => {
       url: watch.url,
       fetchSource: "node_http",
       fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+      responseTruncated: false,
       ok: true,
       changed: true,
       changeType: "price_drop",
@@ -513,6 +516,12 @@ describe("store", () => {
         lastSnapshot: {
           title: "Widget",
           canonicalTitle: undefined,
+          brand: undefined,
+          modelId: undefined,
+          sku: undefined,
+          mpn: undefined,
+          gtin: undefined,
+          asin: undefined,
           price: 19.99,
           currency: "USD",
           etag: undefined,
@@ -520,6 +529,10 @@ describe("store", () => {
           contentHash: undefined,
           fetchedAt: "2026-03-20T11:30:00.000Z",
           rawSnippet: undefined,
+          fetchSource: undefined,
+          responseBytes: undefined,
+          responseTruncated: undefined,
+          reviewedFields: undefined,
         },
         history: [
           {
@@ -574,6 +587,30 @@ describe("store", () => {
       searchRank: 2,
       searchTitle: "Widget Listing",
       searchDescription: "Widget description",
+    });
+  });
+
+  it("parses snapshot transport metadata used for provenance reporting", () => {
+    const parsed = parseImportedWatchPayload({
+      watches: [
+        {
+          url: "https://example.com/item",
+          lastSnapshot: {
+            title: "Widget",
+            fetchedAt: "2026-03-20T11:30:00.000Z",
+            fetchSource: "node_http",
+            responseBytes: 512,
+            responseTruncated: true,
+          },
+        },
+      ],
+    });
+
+    expect(parsed[0]?.lastSnapshot).toMatchObject({
+      title: "Widget",
+      fetchSource: "node_http",
+      responseBytes: 512,
+      responseTruncated: true,
     });
   });
 

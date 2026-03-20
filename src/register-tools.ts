@@ -36,6 +36,7 @@ import {
   buildWorkflowTriage,
   buildWatchIdentitySummary,
   buildWatchInsights,
+  buildWatchProvenanceSummary,
 } from "./lib/report.js";
 import type { ImportedWatchInput } from "./lib/store.js";
 import { addSavedView, addWatch, applyWatchSnapshotPatch, bulkUpdateWatches, getSavedView, getWatch, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./lib/store.js";
@@ -57,6 +58,7 @@ function buildScanSummary(results: Awaited<ReturnType<typeof runScan>>) {
     highPriority: 0,
     lowConfidence: 0,
     unchanged: 0,
+    truncatedResponses: 0,
     reviewQueued: 0,
     reviewApplied: 0,
   };
@@ -72,6 +74,7 @@ function buildScanSummary(results: Awaited<ReturnType<typeof runScan>>) {
       summary.lowConfidence += 1;
     }
     if (!result.changed && result.ok) summary.unchanged += 1;
+    if (result.responseTruncated) summary.truncatedResponses += 1;
     if (result.reviewQueued) summary.reviewQueued += 1;
     if (result.reviewApplied) summary.reviewApplied += 1;
     for (const warning of result.reviewWarnings) reviewWarnings.add(warning);
@@ -86,6 +89,7 @@ function buildScanSummary(results: Awaited<ReturnType<typeof runScan>>) {
       url: result.url,
       fetchSource: result.fetchSource,
       fetchSourceNote: result.fetchSourceNote,
+      responseTruncated: result.responseTruncated,
       changeType: result.changeType,
       alertSeverity: result.alertSeverity,
       alertScore: result.alertScore,
@@ -172,6 +176,9 @@ const IMPORTED_WATCH_SCHEMA = Type.Object({
       contentHash: Type.Optional(Type.String()),
       fetchedAt: Type.String(),
       rawSnippet: Type.Optional(Type.String()),
+      fetchSource: Type.Optional(Type.Union([Type.Literal("node_http"), Type.Literal("firecrawl")])),
+      responseBytes: Type.Optional(Type.Number()),
+      responseTruncated: Type.Optional(Type.Boolean()),
       reviewedFields: Type.Optional(
         Type.Array(
           Type.Object({
@@ -1617,6 +1624,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           : `${extracted.title ?? url}: no price extracted`;
         return jsonResult({
           meta,
+          truncated: Boolean(meta.truncated),
           bodyPreview: preview,
           bodyLength: text.length,
           extracted,
@@ -1624,6 +1632,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           fetchSource,
           fetchSourceNote,
           extractionConfidence,
+          warnings: meta.truncated ? ["Response hit the configured byte cap; extraction may be incomplete."] : [],
           summaryLine,
         });
       },
@@ -1664,6 +1673,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         return jsonResult({
           url,
           meta,
+          truncated: Boolean(meta.truncated),
           extracted,
           confidence,
           debug,
@@ -1734,6 +1744,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_llm_review_run",
               "deal_llm_review_apply",
               "deal_watch_insights",
+              "deal_watch_provenance",
               "deal_watch_identity",
               "deal_schedule_advice",
             ],
@@ -1771,6 +1782,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_llm_review_queue",
               "deal_llm_review_run",
               "deal_watch_insights",
+              "deal_watch_provenance",
               "deal_watch_identity",
               "deal_schedule_advice",
               "deal_workflow_portfolio",
@@ -2164,6 +2176,29 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           };
         }
         return jsonResult(buildWatchInsights(watch));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_watch_provenance",
+      label: "Deal Hunter",
+      description: "Show how one watch entered the store, what the latest committed snapshot came from, and whether any reviewed fields or truncation warnings exist.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "watch not found" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+        return jsonResult(buildWatchProvenanceSummary(watch));
       },
     },
     { optional: false },

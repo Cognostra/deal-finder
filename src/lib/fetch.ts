@@ -106,18 +106,21 @@ export async function cappedFetch(
     const t = setTimeout(() => ac.abort(), cfg.requestTimeoutMs);
     const res = await fetchViaFirecrawl(startUrl, cfg, options?.signal ?? ac.signal);
     clearTimeout(t);
+    const cappedText = res.bodyText.slice(0, cfg.maxBytesPerResponse);
+    const truncated = res.bodyText.length > cappedText.length;
     const meta: FetchMeta = {
       status: res.ok ? 200 : res.status || 599,
       finalUrl: startUrl,
-      bytesRead: res.bodyText.length,
+      bytesRead: cappedText.length,
+      truncated,
     };
     if (!res.ok) {
       return {
         meta: { ...meta, status: 599 },
-        text: res.error ?? res.bodyText,
+        text: res.error ?? cappedText,
       };
     }
-    return { meta, text: res.bodyText };
+    return { meta, text: cappedText };
   }
 
   const dispatcher = await getDispatcher(cfg);
@@ -158,6 +161,7 @@ export async function cappedFetch(
     status: res.status,
     finalUrl: currentUrl,
     bytesRead: 0,
+    truncated: false,
     etag: res.headers.get("etag") ?? undefined,
     lastModified: res.headers.get("last-modified") ?? undefined,
   };
@@ -175,6 +179,7 @@ export async function cappedFetch(
   const reader = res.body.getReader();
   const chunks: Buffer[] = [];
   let total = 0;
+  let truncated = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -185,6 +190,7 @@ export async function cappedFetch(
         if (take > 0) chunks.push(buf.subarray(0, take));
         total += take;
         if (total >= max) {
+          truncated = true;
           await reader.cancel();
           break;
         }
@@ -196,5 +202,6 @@ export async function cappedFetch(
 
   const text = Buffer.concat(chunks).toString("utf8");
   meta.bytesRead = text.length;
+  meta.truncated = truncated;
   return { meta, text };
 }

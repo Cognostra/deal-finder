@@ -58,6 +58,7 @@ const lowConfidenceResult: ScanResultItem = {
   url: "http://shop.test/item",
   fetchSource: "node_http",
   fetchSourceNote: "Fetched directly over HTTP by the Node engine.",
+  responseTruncated: false,
   ok: true,
   changed: true,
   changeType: "first_seen",

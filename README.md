@@ -127,6 +127,7 @@ agents: {
           "deal_llm_review_run",
           "deal_llm_review_apply",
           "deal_watch_insights",
+          "deal_watch_provenance",
           "deal_watch_identity",
           "deal_schedule_advice",
           "deal_doctor",
@@ -198,6 +199,7 @@ agents: {
 | `deal_llm_review_run` | Execute one queued extraction or identity review through the embedded OpenClaw runtime and return JSON. |
 | `deal_llm_review_apply` | Apply reviewed extraction or identity fields back onto a watch snapshot with dry-run preview support. |
 | `deal_watch_insights` | Explain one watch in depth: trend, volatility, glitch risk, and active signals. |
+| `deal_watch_provenance` | Show how a watch entered the store, what the latest snapshot came from, and whether truncation or review touched it. |
 | `deal_watch_identity` | Show stored product identifiers for a watch and any other watches sharing those identifiers. |
 | `deal_schedule_advice` | Recommend scan cadence by host or watch from observed history timing. |
 | `deal_doctor` | Run a lightweight sanity check for config and watchlist setup. |
@@ -234,12 +236,13 @@ Recommended first-run workflow:
 25. `deal_llm_review_queue` if weak extraction or identity cases still need optional model-assisted review.
 26. `deal_llm_review_run` when you want one queued review executed immediately through your current OpenClaw model setup.
 27. `deal_llm_review_apply` in `dryRun: true` mode before writing reviewed extraction or identity fields back to a watch snapshot.
-28. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
-29. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-30. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
-31. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
-32. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-33. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+28. `deal_watch_provenance` when you need to verify where a watch came from or whether a committed snapshot was truncated or manually reviewed.
+29. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
+30. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+31. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+32. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+33. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+34. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_watch_provenance`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -248,6 +251,7 @@ Recommended first-run workflow:
 - `alertSeverity`, `alertScore`, `extractionConfidence`
 - `fetchSource`, `fetchSourceNote`
 - `reviewMode`, `reviewQueued`, `reviewApplied`, `reviewedFields`, `reviewWarnings`
+- `responseTruncated`
 - `summaryLine`
 - top-level `summary`, `rankedAlerts`, and aggregate `reviewWarnings`
 
@@ -261,6 +265,14 @@ Snapshots can now also persist product identity hints when the page exposes them
 - `mpn`
 - `gtin`
 - `asin`
+
+Committed snapshots also persist fetch provenance for trust/debugging:
+
+- `fetchSource`
+- `responseBytes`
+- `responseTruncated`
+
+If a fetch hit the configured byte cap, the scan result and the committed snapshot now surface that explicitly so you can inspect it with `deal_watch_provenance` or `deal_extraction_debug`.
 
 Reviewed snapshot updates can also persist field-level provenance when you apply an extraction or identity review:
 
