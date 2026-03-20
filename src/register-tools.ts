@@ -30,6 +30,7 @@ import {
 } from "./lib/report.js";
 import type { ImportedWatchInput } from "./lib/store.js";
 import { addSavedView, addWatch, bulkUpdateWatches, getSavedView, getWatch, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./lib/store.js";
+import { buildWatchFromTemplate, listWatchTemplates } from "./lib/templates.js";
 import { buildWatchSignals, searchWatches } from "./lib/watch-view.js";
 import { canonicalizeWatchUrl, validateTargetUrl } from "./lib/url-policy.js";
 
@@ -315,6 +316,94 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           await saveStore(storePath, store);
         });
         return jsonResult({ ok: true, message: "Watch added." });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_template_list",
+      label: "Deal Hunter",
+      description: "List built-in watch templates for common deal and restock tracking patterns.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        return jsonResult({
+          count: listWatchTemplates().length,
+          templates: listWatchTemplates(),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_watch_add_template",
+      label: "Deal Hunter",
+      description: "Create a watch from a built-in template. Supports dry-run preview before writing.",
+      parameters: Type.Object({
+        templateId: Type.Union([
+          Type.Literal("price_cap"),
+          Type.Literal("percent_drop"),
+          Type.Literal("hybrid_deal"),
+          Type.Literal("restock_signal"),
+          Type.Literal("clearance_hunter"),
+        ]),
+        url: Type.String(),
+        label: Type.Optional(Type.String()),
+        group: Type.Optional(Type.String()),
+        tags: Type.Optional(Type.Array(Type.String())),
+        maxPrice: Type.Optional(Type.Number()),
+        percentDrop: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
+        keywords: Type.Optional(Type.Array(Type.String())),
+        checkIntervalHint: Type.Optional(Type.String()),
+        enabled: Type.Optional(Type.Boolean()),
+        dryRun: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params) => {
+        const cfg = resolveDealConfig(api);
+        const normalizedUrl = canonicalizeWatchUrl(params.url, cfg).toString();
+        const built = buildWatchFromTemplate({
+          templateId: params.templateId,
+          url: normalizedUrl,
+          label: params.label,
+          group: params.group,
+          tags: params.tags,
+          maxPrice: params.maxPrice,
+          percentDrop: params.percentDrop,
+          keywords: params.keywords,
+          checkIntervalHint: params.checkIntervalHint,
+          enabled: params.enabled,
+        });
+        const { template, ...watchInput } = built;
+
+        if (params.dryRun !== false) {
+          return jsonResult({
+            ok: true,
+            dryRun: true,
+            template,
+            watch: toWatchView({
+              id: "dry-run",
+              createdAt: new Date().toISOString(),
+              enabled: watchInput.enabled ?? true,
+              ...watchInput,
+            }),
+          });
+        }
+
+        let watch = null;
+        await withStore(async (store) => {
+          watch = addWatch(store, watchInput);
+          await saveStore(storePath, store);
+        });
+
+        return jsonResult({
+          ok: true,
+          dryRun: false,
+          template,
+          watch: toWatchView(watch!),
+        });
       },
     },
     { optional: true },
@@ -1408,7 +1497,9 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           overview: {
             installCommand: "openclaw plugins install openclaw-deal-hunter",
             coreTools: [
+              "deal_template_list",
               "deal_watch_add",
+              "deal_watch_add_template",
               "deal_watch_update",
               "deal_watch_set_enabled",
               "deal_watch_search",
@@ -1454,6 +1545,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           tools: {
             readOnlyTools: [
               "deal_watch_list",
+              "deal_template_list",
               "deal_watch_search",
               "deal_saved_view_list",
               "deal_saved_view_run",
@@ -1482,6 +1574,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
             ],
             writeTools: [
               "deal_watch_add",
+              "deal_watch_add_template",
               "deal_watch_update",
               "deal_watch_set_enabled",
               "deal_saved_view_create",
@@ -1497,7 +1590,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_scan",
             ],
             examplePrompt:
-              "Use deal_view_report for my GPU alerts view, then use deal_best_price_board, deal_workflow_best_opportunities, and deal_llm_review_queue if any results still look ambiguous.",
+              "Use deal_template_list to choose the right starter template, then use deal_watch_add_template in dry-run mode before saving a new watch.",
           },
           cron: {
             example:

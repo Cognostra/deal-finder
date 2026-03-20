@@ -81,7 +81,9 @@ agents: {
         allow: [
           "openclaw-deal-hunter",
           "deal_watch_list",
+          "deal_template_list",
           "deal_watch_add",
+          "deal_watch_add_template",
           "deal_watch_update",
           "deal_watch_set_enabled",
           "deal_watch_search",
@@ -137,7 +139,9 @@ agents: {
 | Tool | Purpose |
 |------|---------|
 | `deal_watch_list` | List watches and last snapshots. |
+| `deal_template_list` | List built-in watch templates for common deal and restock patterns. |
 | `deal_watch_add` | Add a URL with optional `maxPrice`, `percentDrop`, `keywords`. |
+| `deal_watch_add_template` | Create a watch from a built-in template, with dry-run preview support. |
 | `deal_watch_update` | Update a watch’s URL, thresholds, label, keywords, or enabled state. |
 | `deal_watch_set_enabled` | Enable or disable one or more watches in bulk. |
 | `deal_watch_search` | Search/filter/sort watches by query, enabled state, snapshot state, signals, tag, group, or price. |
@@ -189,23 +193,25 @@ Recommended first-run workflow:
 1. `deal_quickstart` for the shortest safe first-run checklist.
 2. `deal_help` for install/tool guidance and sample prompts.
 3. `deal_sample_setup` for ready-to-copy install/config/cron examples.
-4. `deal_watch_add` to create the first watch.
-5. `deal_watch_search` to inspect watches and current threshold/keyword signals.
-6. `deal_saved_view_create` once you have a search you expect to reuse, like "GPU alerts" or "disabled watches with snapshots".
-7. `deal_saved_view_update` once you know which saved slices actually deserve their own workflow.
-8. `deal_watch_tag`, `deal_watch_bulk_update`, or `deal_view_bulk_update` to organize watches into tags and groups as the list grows.
-9. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
-10. `deal_scan` with `commit: true` to capture snapshots, then `deal_view_scan` when you want to scan only one saved slice.
-11. `deal_view_report`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
-12. `deal_product_groups` and `deal_best_price_board` once you have multiple same-product watches across retailers.
-13. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
-14. `deal_llm_review_queue` if weak extraction or identity cases still need optional model-assisted review.
-15. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
-16. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-17. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
-18. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
-19. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-20. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+4. `deal_template_list` if you want an opinionated starter path instead of manually filling watch fields.
+5. `deal_watch_add_template` in `dryRun: true` mode to preview a watch built from a template before saving it.
+6. `deal_watch_add` when you want a fully custom watch instead of a template.
+7. `deal_watch_search` to inspect watches and current threshold/keyword signals.
+8. `deal_saved_view_create` once you have a search you expect to reuse, like "GPU alerts" or "disabled watches with snapshots".
+9. `deal_saved_view_update` once you know which saved slices actually deserve their own workflow.
+10. `deal_watch_tag`, `deal_watch_bulk_update`, or `deal_view_bulk_update` to organize watches into tags and groups as the list grows.
+11. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
+12. `deal_scan` with `commit: true` to capture snapshots, then `deal_view_scan` when you want to scan only one saved slice.
+13. `deal_view_report`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
+14. `deal_product_groups` and `deal_best_price_board` once you have multiple same-product watches across retailers.
+15. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
+16. `deal_llm_review_queue` if weak extraction or identity cases still need optional model-assisted review.
+17. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
+18. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+19. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+20. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+21. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+22. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -308,6 +314,7 @@ If you enable OpenClaw’s bundled `llm-task` separately, you can feed those pay
 Watch management now also includes:
 
 - URL canonicalization that strips common tracking params before storage and dedupe checks
+- built-in watch templates for price caps, percent-drop tracking, hybrid deal watches, restock signals, and clearance hunting
 - optional `group` and `tags` metadata for organizing larger watchlists
 - saved views for repeat watchlist searches and imported-list navigation
 - saved-view execution targets for scanning, reporting, and bulk updates

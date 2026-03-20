@@ -774,7 +774,9 @@ export function buildSampleSetup() {
     allowlist: [
       "openclaw-deal-hunter",
       "deal_watch_list",
+      "deal_template_list",
       "deal_watch_add",
+      "deal_watch_add_template",
       "deal_watch_update",
       "deal_watch_set_enabled",
       "deal_watch_search",
@@ -822,6 +824,8 @@ export function buildSampleSetup() {
     examplePrompts: [
       "Use deal_help and tell me the best first-run workflow for this plugin.",
       "Use deal_quickstart and give me the safest first-run checklist for this plugin.",
+      "Use deal_template_list and recommend the best starter template for my first watch.",
+      "Use deal_watch_add_template in dry-run mode to prepare a restock_signal watch for https://example.com/product.",
       "Use deal_watch_add to add a watch for https://example.com/product and then use deal_scan with commit true.",
       "Use deal_watch_search to show me disabled watches and any watches currently showing threshold or keyword signals.",
       "Use deal_saved_view_create to save a view for my GPU watches with active signals, then run it.",
@@ -857,6 +861,7 @@ export function buildQuickstartGuide() {
     firstRunChecklist: [
       "Enable the plugin and allow the tools you want your agent to use.",
       "Set allowedHosts for the retailer domains you trust most.",
+      "Use deal_template_list if you want a faster template-driven first watch instead of building fields manually.",
       "Use deal_watch_add to create the first watch.",
       "Use deal_saved_view_create for repeat searches once your watchlist grows beyond a few items.",
       "Use deal_saved_view_update to keep saved views aligned with how you actually manage the watchlist.",
@@ -871,6 +876,8 @@ export function buildQuickstartGuide() {
     ],
     recommendedPrompts: [
       "Use deal_sample_setup and show me the safest minimal config for this plugin.",
+      "Use deal_template_list and recommend the right template for a price-target watch.",
+      "Use deal_watch_add_template in dry-run mode to show me the exact watch config before saving it.",
       "Use deal_watch_add to add my first watch, then run deal_scan with commit true.",
       "Use deal_report and deal_alerts to summarize the most interesting current deals.",
       "Use deal_view_report for my saved GPU alerts view so I get a compact multi-signal report in one call.",
