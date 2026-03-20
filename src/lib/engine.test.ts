@@ -3,12 +3,17 @@ import type { ResolvedDealConfig } from "../config.js";
 import type { StoreFile, WatchSnapshot } from "../types.js";
 import { extractListing, hashSnippet } from "./heuristics.js";
 
-const { cappedFetchMock } = vi.hoisted(() => ({
+const { cappedFetchMock, runLlmReviewCandidateMock } = vi.hoisted(() => ({
   cappedFetchMock: vi.fn(),
+  runLlmReviewCandidateMock: vi.fn(),
 }));
 
 vi.mock("./fetch.js", () => ({
   cappedFetch: cappedFetchMock,
+}));
+
+vi.mock("./llm-review.js", () => ({
+  runLlmReviewCandidate: runLlmReviewCandidateMock,
 }));
 
 import { mergeCommittedScanResults, runScan } from "./engine.js";
@@ -27,6 +32,25 @@ function makeConfig(overrides: Partial<ResolvedDealConfig> = {}): ResolvedDealCo
     blockedHosts: undefined,
     firecrawlApiKey: undefined,
     firecrawlBaseUrl: "https://api.firecrawl.dev",
+    llmReview: {
+      mode: "off",
+      lowConfidenceThreshold: 45,
+      maxReviewsPerScan: 3,
+      allowPriceRewrite: false,
+      allowIdentityRewrite: true,
+      provider: undefined,
+      model: undefined,
+      timeoutMs: 30_000,
+    },
+    discovery: {
+      enabled: false,
+      provider: "off",
+      maxSearchResults: 5,
+      maxFetches: 5,
+      allowedHosts: undefined,
+      blockedHosts: undefined,
+      timeoutMs: 25_000,
+    },
     ...overrides,
   };
 }
@@ -72,6 +96,7 @@ function snapshotFromHtml(html: string): WatchSnapshot {
 
 afterEach(() => {
   cappedFetchMock.mockReset();
+  runLlmReviewCandidateMock.mockReset();
 });
 
 describe("runScan", () => {
@@ -259,6 +284,70 @@ describe("runScan", () => {
     expect(result.fetchSourceNote).toContain("Firecrawl");
   });
 
+  it("queues low-confidence review candidates when mode is queue", async () => {
+    const html = `<html><body><h1>Mystery Listing</h1></body></html>`;
+    cappedFetchMock.mockResolvedValue({
+      meta: { status: 200, finalUrl: "http://shop.test/item", bytesRead: html.length },
+      text: html,
+    });
+
+    const [result] = await runScan({
+      api: makeApi(),
+      cfg: makeConfig({ llmReview: { ...makeConfig().llmReview, mode: "queue", lowConfidenceThreshold: 80 } }),
+      store: makeStore(),
+      storePath: "/tmp/unused.json",
+      commit: false,
+    });
+
+    expect(result.reviewMode).toBe("queue");
+    expect(result.reviewQueued).toBe(true);
+    expect(result.reviewApplied).toBe(false);
+    expect(runLlmReviewCandidateMock).not.toHaveBeenCalled();
+  });
+
+  it("applies bounded automatic review when mode is auto_assist", async () => {
+    const html = `<html><body><h1>Mystery Listing</h1></body></html>`;
+    cappedFetchMock.mockResolvedValue({
+      meta: { status: 200, finalUrl: "http://shop.test/item", bytesRead: html.length },
+      text: html,
+    });
+    runLlmReviewCandidateMock.mockResolvedValue({
+      provider: "ollama",
+      model: "qwen2.5:1.5b",
+      rawText: "{\"title\":\"Reviewed Widget\",\"price\":19.99,\"currency\":\"USD\",\"confidence\":{\"level\":\"medium\",\"reasons\":[\"Filled sparse extraction.\"]}}",
+      json: {
+        title: "Reviewed Widget",
+        price: 19.99,
+        currency: "USD",
+        confidence: { level: "medium", reasons: ["Filled sparse extraction."] },
+      },
+    });
+
+    const [result] = await runScan({
+      api: makeApi(),
+      cfg: makeConfig({
+        llmReview: {
+          ...makeConfig().llmReview,
+          mode: "auto_assist",
+          lowConfidenceThreshold: 80,
+          allowPriceRewrite: true,
+        },
+      }),
+      store: makeStore(),
+      storePath: "/tmp/unused.json",
+      commit: false,
+    });
+
+    expect(result.reviewMode).toBe("auto_assist");
+    expect(result.reviewQueued).toBe(true);
+    expect(result.reviewApplied).toBe(true);
+    expect(result.reviewedFields).toContain("title");
+    expect(result.after?.title).toBe("Reviewed Widget");
+    expect(result.after?.price).toBe(19.99);
+    expect(result.reviewProvider).toBe("ollama");
+    expect(runLlmReviewCandidateMock).toHaveBeenCalledTimes(1);
+  });
+
   const fixtures = [
     {
       name: "price drop with alerting",
@@ -359,6 +448,11 @@ describe("mergeCommittedScanResults", () => {
           timingMs: { fetch: 1, parse: 0, total: 1 },
           after: { fetchedAt: "2026-03-19T00:00:00.000Z", price: 10, canonicalTitle: "widget" },
           alerts: [],
+          reviewMode: "off",
+          reviewQueued: false,
+          reviewApplied: false,
+          reviewWarnings: [],
+          reviewedFields: [],
         },
       ],
       makeConfig(),
@@ -401,6 +495,11 @@ describe("mergeCommittedScanResults", () => {
             contentHash: "hash-1",
           },
           alerts: [],
+          reviewMode: "off",
+          reviewQueued: false,
+          reviewApplied: false,
+          reviewWarnings: [],
+          reviewedFields: [],
         },
       ],
       makeConfig(),

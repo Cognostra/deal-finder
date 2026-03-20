@@ -390,15 +390,70 @@ function extractHomeDepotListing(html: string): RetailerExtraction | null {
   };
 }
 
+function extractCostcoListing(html: string): RetailerExtraction | null {
+  if (!/automation-id=["']productPriceOutput["']|data-testid=["']product-name["']/i.test(html)) return null;
+
+  const title =
+    html.match(/data-testid=["']product-name["'][^>]*>\s*([\s\S]*?)\s*<\/[^>]+>/i)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim() ??
+    html.match(/<h1[^>]*>\s*([\s\S]*?)\s*<\/h1>/i)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim();
+  const priceRaw =
+    html.match(/automation-id=["']productPriceOutput["'][^>]*>\s*([$£€]\s*[\d,]+(?:\.\d+)?)\s*<\/[^>]+>/i)?.[1] ??
+    html.match(/data-testid=["']product-price["'][^>]*>\s*([$£€]\s*[\d,]+(?:\.\d+)?)\s*<\/[^>]+>/i)?.[1];
+  const amount = parseCurrencyAmount(priceRaw);
+
+  if (!title && amount.price == null) return null;
+  return {
+    extractorId: "retailer_costco",
+    title,
+    brand: normalizeIdentityValue(title?.split(" ")[0]),
+    price: amount.price,
+    currency: amount.currency,
+  };
+}
+
+function extractLowesListing(html: string): RetailerExtraction | null {
+  if (!/data-testid=["']product-title["'][\s\S]*itemprop=["']price["']/i.test(html)) return null;
+
+  const title =
+    html.match(/data-testid=["']product-title["'][^>]*>\s*([\s\S]*?)\s*<\/[^>]+>/i)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim() ??
+    html.match(/<h1[^>]*>\s*([\s\S]*?)\s*<\/h1>/i)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim();
+  const priceRaw =
+    html.match(/data-testid=["']product-price["'][^>]*>\s*([$£€]\s*[\d,]+(?:\.\d+)?)\s*<\/[^>]+>/i)?.[1] ??
+    html.match(/itemprop=["']price["'][^>]*content=["']([\d.]+)["']/i)?.[1];
+  const amount =
+    priceRaw && /^[\d.]+$/.test(priceRaw)
+      ? { price: Number.parseFloat(priceRaw), currency: "USD" }
+      : parseCurrencyAmount(priceRaw);
+
+  if (!title && amount.price == null) return null;
+  return {
+    extractorId: "retailer_lowes",
+    title,
+    brand: normalizeIdentityValue(title?.split(" ")[0]),
+    price: amount.price,
+    currency: amount.currency,
+  };
+}
+
 export function extractRetailerListing(html: string): RetailerExtraction | null {
   return (
     extractAmazonListing(html) ??
     extractBestBuyListing(html) ??
     extractEbayListing(html) ??
     extractTargetListing(html) ??
+    extractLowesListing(html) ??
     extractWalmartListing(html) ??
     extractNeweggListing(html) ??
-    extractHomeDepotListing(html)
+    extractHomeDepotListing(html) ??
+    extractCostcoListing(html)
   );
 }
 

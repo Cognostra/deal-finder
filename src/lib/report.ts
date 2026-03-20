@@ -1,6 +1,6 @@
 import type { ResolvedDealConfig } from "../config.js";
-import type { AlertSeverity, LlmReviewCandidate, ProductIdentityEntry, StoreFile, Watch, WatchHistoryEntry } from "../types.js";
-import { buildProductGroups, buildProductMatchCandidates, getWatchHost, getWatchIdentityFields } from "./product-identity.js";
+import type { AlertSeverity, DiscoveryCandidate, LlmReviewCandidate, ProductIdentityEntry, ProductIdentityField, StoreFile, Watch, WatchHistoryEntry } from "../types.js";
+import { buildProductGroups, buildProductMatchCandidates, getWatchHost, getWatchIdentityFields, getWatchIdentityStrength } from "./product-identity.js";
 import { canonicalizeWatchUrl } from "./url-policy.js";
 import { buildWatchSignals } from "./watch-view.js";
 
@@ -395,6 +395,12 @@ export function buildHealthSummary(store: StoreFile, cfg: ResolvedDealConfig, st
   watchCount: number;
   enabledCount: number;
   fetcher: ResolvedDealConfig["fetcher"];
+  discoveryEnabled: boolean;
+  discoveryProvider: ResolvedDealConfig["discovery"]["provider"];
+  discoveryAllowedHostsConfigured: boolean;
+  discoveryFirecrawlReady: boolean;
+  reviewMode: ResolvedDealConfig["llmReview"]["mode"];
+  reviewBudgetPerScan: number;
   requestTimeoutMs: number;
   maxConcurrent: number;
   maxBytesPerResponse: number;
@@ -415,12 +421,33 @@ export function buildHealthSummary(store: StoreFile, cfg: ResolvedDealConfig, st
   if (store.watches.some((watch) => !watch.enabled)) {
     recommendations.push("Use deal_watch_search or deal_watch_set_enabled to review disabled watches.");
   }
+  if (cfg.discovery.enabled && cfg.discovery.provider === "manual") {
+    recommendations.push("Use deal_discovery_backlog and deal_discovery_report to plan manual candidate expansion before importing anything.");
+  }
+  if (cfg.discovery.enabled && cfg.discovery.provider === "firecrawl-search" && !cfg.firecrawlApiKey) {
+    recommendations.push('discovery.provider is "firecrawl-search" but firecrawlApiKey is missing; discovery search will not work until it is configured.');
+  }
+  if (cfg.discovery.enabled && cfg.discovery.provider === "firecrawl-search" && !cfg.discovery.allowedHosts?.length) {
+    recommendations.push("Set discovery.allowedHosts to explicit trusted retailer hosts before using provider-backed discovery search.");
+  }
+  if (cfg.llmReview.mode === "queue") {
+    recommendations.push("Use deal_llm_review_queue and deal_review_policy to inspect queued low-confidence reviews.");
+  }
+  if (cfg.llmReview.mode === "auto_assist") {
+    recommendations.push("Review deal_review_policy so automatic low-confidence review stays within your intended budget and rewrite rules.");
+  }
 
   return {
     storePath,
     watchCount: store.watches.length,
     enabledCount: store.watches.filter((watch) => watch.enabled).length,
     fetcher: cfg.fetcher,
+    discoveryEnabled: cfg.discovery.enabled,
+    discoveryProvider: cfg.discovery.provider,
+    discoveryAllowedHostsConfigured: Boolean(cfg.discovery.allowedHosts?.length),
+    discoveryFirecrawlReady: Boolean(cfg.firecrawlApiKey),
+    reviewMode: cfg.llmReview.mode,
+    reviewBudgetPerScan: cfg.llmReview.maxReviewsPerScan,
     requestTimeoutMs: cfg.requestTimeoutMs,
     maxConcurrent: cfg.maxConcurrent,
     maxBytesPerResponse: cfg.maxBytesPerResponse,
@@ -472,6 +499,46 @@ export function buildDoctorSummary(store: StoreFile, cfg: ResolvedDealConfig, st
     });
   }
 
+  if (cfg.discovery.enabled && cfg.discovery.provider === "firecrawl-search" && !cfg.firecrawlApiKey) {
+    issues.push({
+      severity: "warn",
+      code: "discovery_missing_firecrawl_api_key",
+      message: 'discovery.provider is set to "firecrawl-search" but firecrawlApiKey is not configured.',
+    });
+  }
+
+  if (cfg.discovery.enabled && cfg.discovery.provider === "firecrawl-search" && !cfg.discovery.allowedHosts?.length) {
+    issues.push({
+      severity: "warn",
+      code: "discovery_missing_allowed_hosts",
+      message: 'discovery.provider is "firecrawl-search" but discovery.allowedHosts is empty; bounded provider-backed discovery should use explicit trusted hosts.',
+    });
+  }
+
+  if (cfg.discovery.enabled && cfg.discovery.provider === "manual") {
+    issues.push({
+      severity: "info",
+      code: "manual_discovery_enabled",
+      message: "Manual discovery is enabled. Use deal_discovery_backlog or deal_discovery_report to plan explicit candidate work.",
+    });
+  }
+
+  if (cfg.llmReview.mode === "queue") {
+    issues.push({
+      severity: "info",
+      code: "review_queue_mode",
+      message: "Scan-time review is in queue mode; low-confidence results will queue review metadata without invoking a model.",
+    });
+  }
+
+  if (cfg.llmReview.mode === "auto_assist") {
+    issues.push({
+      severity: "info",
+      code: "review_auto_assist_enabled",
+      message: "Scan-time review auto-assist is enabled; low-confidence results may invoke bounded model review during scans.",
+    });
+  }
+
   if (issues.length === 0) {
     issues.push({
       severity: "info",
@@ -487,6 +554,8 @@ export function buildDoctorSummary(store: StoreFile, cfg: ResolvedDealConfig, st
     recommendedCommands: [
       "deal_help",
       "deal_watch_search",
+      "deal_discovery_policy",
+      "deal_review_policy",
       "deal_report",
       "deal_health",
     ],
@@ -508,6 +577,81 @@ export function buildSampleSetup() {
               allowedHosts: ["*.example.com"],
               blockedHosts: ["localhost"],
               fetcher: "local",
+            },
+          },
+        },
+      },
+    },
+    discoveryExamples: {
+      manual: {
+        plugins: {
+          entries: {
+            "openclaw-deal-hunter": {
+              enabled: true,
+              config: {
+                allowedHosts: ["www.bestbuy.com", "www.target.com"],
+                discovery: {
+                  enabled: true,
+                  provider: "manual",
+                  maxFetches: 5,
+                  allowedHosts: ["www.bestbuy.com", "www.target.com"],
+                },
+              },
+            },
+          },
+        },
+      },
+      firecrawlSearch: {
+        plugins: {
+          entries: {
+            "openclaw-deal-hunter": {
+              enabled: true,
+              config: {
+                firecrawlApiKey: "fc-REPLACE_ME",
+                discovery: {
+                  enabled: true,
+                  provider: "firecrawl-search",
+                  maxSearchResults: 5,
+                  maxFetches: 5,
+                  allowedHosts: ["www.bestbuy.com", "www.target.com"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    reviewExamples: {
+      queueOnly: {
+        plugins: {
+          entries: {
+            "openclaw-deal-hunter": {
+              enabled: true,
+              config: {
+                llmReview: {
+                  mode: "queue",
+                  lowConfidenceThreshold: 45,
+                  maxReviewsPerScan: 3,
+                },
+              },
+            },
+          },
+        },
+      },
+      autoAssist: {
+        plugins: {
+          entries: {
+            "openclaw-deal-hunter": {
+              enabled: true,
+              config: {
+                llmReview: {
+                  mode: "auto_assist",
+                  lowConfidenceThreshold: 35,
+                  maxReviewsPerScan: 2,
+                  allowIdentityRewrite: true,
+                  allowPriceRewrite: false,
+                },
+              },
             },
           },
         },
@@ -551,11 +695,20 @@ export function buildSampleSetup() {
       "deal_workflow_cleanup",
       "deal_workflow_best_opportunities",
       "deal_health",
+      "deal_discovery_backlog",
+      "deal_discovery_policy",
+      "deal_review_policy",
       "deal_history",
       "deal_alerts",
       "deal_trends",
       "deal_top_drops",
       "deal_market_check",
+      "deal_market_check_candidates",
+      "deal_discovery_report",
+      "deal_discovery_search",
+      "deal_discovery_fetch",
+      "deal_discovery_run",
+      "deal_discovery_import",
       "deal_product_groups",
       "deal_best_price_board",
       "deal_llm_review_queue",
@@ -586,6 +739,11 @@ export function buildSampleSetup() {
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
       "Use deal_top_drops and deal_trends to show me the strongest current deals with context.",
       "Use deal_market_check for my best-looking deal and show me whether the current watch is actually the best price in my store.",
+      "Use deal_market_check_candidates with a few retailer URLs I provide and tell me whether any look like the same product before I add them.",
+      "Use deal_discovery_report for one watch so I can see the best candidates, blocked results, duplicates, and import recommendations in one compact summary.",
+      "Use deal_discovery_search for one watch and a few allowed retailer hosts so I can get bounded discovery candidates before fetching them.",
+      "Use deal_discovery_run with a few explicit retailer URLs and prepare import recommendations without adding anything yet.",
+      "Use deal_discovery_import in dry-run mode so I can preview which discovery candidates would become new watches.",
       "Use deal_product_groups to cluster likely same-product watches and show me which groups have meaningful internal price spread.",
       "Use deal_best_price_board to rank where my current best-known internal prices are hiding.",
       "Use deal_llm_review_queue to prepare any weak extraction or unresolved identity cases for optional manual or llm-task review.",
@@ -595,6 +753,10 @@ export function buildSampleSetup() {
       "Use deal_watch_identity for my best current deal and tell me whether any other watches appear to be the same product.",
       "Use deal_workflow_triage to tell me what changed, what matters, what is noisy, and what I should review first.",
       "Use deal_workflow_best_opportunities to rank the top real deals, suspicious glitches, and strongest same-product spreads.",
+      "Use deal_discovery_backlog to tell me which watches most need broader retailer coverage before I start discovery work.",
+      "Use deal_discovery_policy to show whether discovery is off, manual-only, or using bounded Firecrawl search.",
+      "Use deal_sample_setup and show me the manual discovery config example plus the safer queue-only review policy example.",
+      "Use deal_review_policy to show whether scan-time review is off, queue-only, or auto-assist.",
       "Use deal_workflow_cleanup to show me duplicates, disabled stale watches, weak extraction cases, and noisy watches.",
       "Use deal_workflow_portfolio to give me an executive dashboard of my current watch portfolio.",
       "Use deal_watch_export to back up my watches, then prepare a deal_watch_import dry run for another workspace.",
@@ -621,6 +783,12 @@ export function buildQuickstartGuide() {
       "Use deal_view_scan or deal_view_report when you want to work on one saved slice instead of the whole portfolio.",
       "Run deal_scan with commit true to capture the first snapshot.",
       "Use deal_alerts, deal_trends, deal_market_check, deal_watch_identity, deal_workflow_triage, and deal_report to inspect what changed.",
+      "Use deal_market_check_candidates if you want to compare one watched product against a few explicit retailer URLs without adding them yet.",
+      "Use deal_discovery_backlog to prioritize which watches deserve discovery effort first.",
+      "Use deal_discovery_policy before enabling provider-backed discovery so you can verify the active host and budget constraints.",
+      "Use deal_discovery_report when you want a compact discovery decision summary before drilling into raw candidate arrays or import previews.",
+      "Enable discovery in manual mode when you want bounded candidate evaluation and import preview from explicit URLs only.",
+      "Enable discovery in firecrawl-search mode only when you also have explicit retailer hosts you trust for bounded search.",
       "Use deal_product_groups and deal_best_price_board after you have same-product coverage across multiple retailers.",
       "Use deal_llm_review_queue when you want optional model-assisted review without making Deal Hunter itself depend on another plugin tool.",
       "Use deal_llm_review_run when you want to execute one queued review explicitly through the embedded OpenClaw runtime.",
@@ -639,6 +807,12 @@ export function buildQuickstartGuide() {
       "Use deal_view_report for my saved GPU alerts view so I get a compact multi-signal report in one call.",
       "Use deal_workflow_triage to tell me what changed and what deserves attention right now.",
       "Use deal_best_price_board to show me where the best current same-product prices are across my store.",
+      "Use deal_discovery_backlog to show which enabled watches are under-covered and worth expanding across more retailers.",
+      "Use deal_discovery_report if I want a smaller-model-friendly discovery summary instead of raw candidate arrays.",
+      "Use deal_discovery_search first when discovery.provider is firecrawl-search and you want candidate URLs from a few trusted retailer hosts.",
+      "Use deal_discovery_run with explicit retailer URLs or a configured firecrawl-search provider when you want bounded discovery plus import preview.",
+      "Use deal_discovery_import in dry-run mode even with provider-backed search so I can preview import decisions before changing the watchlist.",
+      "Use deal_review_policy to confirm whether low-confidence scans will only queue reviews or invoke bounded auto-assist.",
       "Use deal_llm_review_queue if any watches still look ambiguous and I want a ready-to-run JSON review payload.",
       "Use deal_llm_review_run if I want one queued review executed immediately as JSON.",
       "Use deal_llm_review_apply in dry-run mode to preview how a reviewed JSON result would update my watch.",
@@ -957,29 +1131,27 @@ export function buildWatchIdentitySummary(
     label?: string;
     url: string;
     sharedFields: string[];
+    conflictingFields: string[];
+    matchScore: number;
+    matchStrength: "low" | "medium" | "high";
+    matchReasons: string[];
+    matchWarnings: string[];
     latestPrice?: number;
   }>;
 } {
   const identifiers = getWatchIdentityFields(watch);
-  const reasons: string[] = [];
-  const strongFields = new Set(["gtin", "asin", "mpn", "modelId"]);
-  const strengthScore = identifiers.reduce((score, identifier) => {
-    if (strongFields.has(identifier.field)) return score + 2;
-    return score + 1;
-  }, 0);
-
-  if (!identifiers.length) {
-    reasons.push("No persistent product identifiers are stored on the latest snapshot.");
-  } else {
-    reasons.push(`Stored identifiers: ${identifiers.map((identifier) => `${identifier.field}=${identifier.value}`).join(", ")}.`);
-  }
-
-  const identifierMap = new Map(identifiers.map((identifier) => [`${identifier.field}:${identifier.value}`, identifier.field]));
+  const identityStrength = getWatchIdentityStrength(watch);
+  const reasons = [...identityStrength.reasons];
   const relatedWatches = buildProductMatchCandidates(watch, store.watches, { includeLooseTitleFallback: false }).map((candidate) => ({
     watchId: candidate.watchId,
     label: candidate.label,
     url: candidate.url,
     sharedFields: candidate.sharedFields,
+    conflictingFields: candidate.conflictingFields,
+    matchScore: candidate.matchScore,
+    matchStrength: candidate.matchStrength,
+    matchReasons: candidate.matchReasons,
+    matchWarnings: candidate.matchWarnings,
     latestPrice: candidate.latestPrice,
   }));
 
@@ -987,15 +1159,12 @@ export function buildWatchIdentitySummary(
     reasons.push(`Found ${relatedWatches.length} other watch${relatedWatches.length === 1 ? "" : "es"} sharing stored identifiers.`);
   }
 
-  const strength =
-    strengthScore >= 4 ? "high" : strengthScore >= 2 ? "medium" : strengthScore >= 1 ? "low" : "none";
-
   return {
     watchId: watch.id,
     label: watch.label,
     url: watch.url,
     identifiers,
-    strength,
+    strength: identityStrength.strength,
     reasons,
     relatedWatches,
   };
@@ -1024,8 +1193,11 @@ export function buildMarketCheckSummary(
     url: string;
     latestPrice?: number;
     sharedFields: string[];
+    conflictingFields: string[];
     matchScore: number;
+    matchStrength: "low" | "medium" | "high";
     matchReasons: string[];
+    matchWarnings: string[];
   }>;
   reasons: string[];
 } {
@@ -1054,6 +1226,10 @@ export function buildMarketCheckSummary(
   } else {
     reasons.push("No likely same-product watches were found in the current store.");
   }
+  const conflictCount = matches.reduce((count, match) => count + match.conflictingFields.length, 0);
+  if (conflictCount > 0) {
+    reasons.push(`Detected ${conflictCount} identifier conflict${conflictCount === 1 ? "" : "s"} across the candidate set; review match warnings before acting.`);
+  }
   if (spread) {
     reasons.push(`Observed internal market spread is ${spread.absolute.toFixed(2)} (${spread.percentFromBest.toFixed(1)}% from the best known price).`);
   }
@@ -1070,6 +1246,269 @@ export function buildMarketCheckSummary(
     spread,
     matches,
     reasons,
+  };
+}
+
+export function buildDiscoveryReport(args: {
+  watch: Watch;
+  provider: string;
+  candidates: DiscoveryCandidate[];
+  importPreview: Array<{
+    candidate: DiscoveryCandidate;
+    duplicateWatchId?: string;
+    importable: boolean;
+  }>;
+  query?: string;
+  searchHosts?: string[];
+  skippedHosts?: string[];
+  skippedResults?: Array<{ url: string; reason: string }>;
+}): {
+  anchor: {
+    watchId: string;
+    label?: string;
+    url: string;
+    identityStrength: ReturnType<typeof getWatchIdentityStrength>;
+  };
+  provider: string;
+  query?: string;
+  searchHosts?: string[];
+  skippedHosts?: string[];
+  summary: {
+    candidateCount: number;
+    fetchedOkCount: number;
+    blockedOrFailedCount: number;
+    importableCount: number;
+    strongMatchCount: number;
+    reviewCount: number;
+    duplicateCount: number;
+    weakOrRejectedCount: number;
+    skippedResultCount: number;
+  };
+  topCandidates: Array<{
+    url: string;
+    host: string;
+    matchScore?: number;
+    matchStrength?: string;
+    recommendedAction: string;
+    duplicateWatchId?: string;
+    price?: number;
+    currency?: string;
+    extractedTitle?: string;
+    matchedFields: ProductIdentityField[];
+    reasons: string[];
+    warnings: string[];
+  }>;
+  blockedOrFailed: Array<{
+    url: string;
+    host: string;
+    fetchStatus: string;
+    blockedReason?: string;
+  }>;
+  skippedResults?: Array<{ url: string; reason: string }>;
+  actionSummary: string[];
+} {
+  const { watch, provider, candidates, importPreview, query, searchHosts, skippedHosts, skippedResults } = args;
+  const previewByUrl = new Map(importPreview.map((entry) => [entry.candidate.url, entry]));
+  const strongMatchCount = candidates.filter((candidate) => candidate.matchStrength === "high").length;
+  const reviewCount = candidates.filter((candidate) => candidate.recommendedAction === "review_before_import").length;
+  const duplicateCount = importPreview.filter((entry) => Boolean(entry.duplicateWatchId)).length;
+  const weakOrRejectedCount = candidates.filter((candidate) => candidate.recommendedAction === "likely_not_same_product").length;
+  const fetchedOkCount = candidates.filter((candidate) => candidate.fetchStatus === "ok").length;
+  const blockedOrFailedCount = candidates.filter((candidate) => candidate.fetchStatus !== "ok").length;
+  const importableCount = importPreview.filter((entry) => entry.importable).length;
+
+  const topCandidates = candidates
+    .filter((candidate) => candidate.fetchStatus === "ok")
+    .map((candidate) => {
+      const preview = previewByUrl.get(candidate.url);
+      return {
+        url: candidate.url,
+        host: candidate.host,
+        matchScore: candidate.matchScore,
+        matchStrength: candidate.matchStrength,
+        recommendedAction: candidate.recommendedAction,
+        duplicateWatchId: preview?.duplicateWatchId,
+        price: candidate.price,
+        currency: candidate.currency,
+        extractedTitle: candidate.extractedTitle,
+        matchedFields: candidate.matchedFields,
+        reasons: candidate.matchReasons,
+        warnings: candidate.matchWarnings,
+      };
+    })
+    .sort((a, b) =>
+      (b.matchScore ?? 0) - (a.matchScore ?? 0) ||
+      Number(a.duplicateWatchId == null) - Number(b.duplicateWatchId == null) ||
+      a.url.localeCompare(b.url),
+    )
+    .slice(0, 8);
+
+  const blockedOrFailed = candidates
+    .filter((candidate) => candidate.fetchStatus !== "ok")
+    .map((candidate) => ({
+      url: candidate.url,
+      host: candidate.host,
+      fetchStatus: candidate.fetchStatus,
+      blockedReason: candidate.blockedReason,
+    }))
+    .slice(0, 8);
+
+  const actionSummary: string[] = [];
+  if (topCandidates[0]) {
+    actionSummary.push(
+      `Best current candidate is ${topCandidates[0].url} with ${topCandidates[0].matchStrength ?? "unknown"} match strength${topCandidates[0].duplicateWatchId ? ", but it is already represented by an existing watch." : "."}`,
+    );
+  }
+  if (importableCount) {
+    actionSummary.push(`There ${importableCount === 1 ? "is" : "are"} ${importableCount} candidate${importableCount === 1 ? "" : "s"} ready for import after review.`);
+  }
+  if (duplicateCount) {
+    actionSummary.push(`${duplicateCount} candidate${duplicateCount === 1 ? " is" : "s are"} already covered by the current watch store.`);
+  }
+  if (blockedOrFailedCount) {
+    actionSummary.push(`${blockedOrFailedCount} candidate${blockedOrFailedCount === 1 ? "" : "s"} were blocked or failed fetch policy checks.`);
+  }
+  if (!actionSummary.length) {
+    actionSummary.push("No discovery candidates were strong enough to recommend import yet.");
+  }
+
+  return {
+    anchor: {
+      watchId: watch.id,
+      label: watch.label,
+      url: watch.url,
+      identityStrength: getWatchIdentityStrength(watch),
+    },
+    provider,
+    query,
+    searchHosts,
+    skippedHosts,
+    summary: {
+      candidateCount: candidates.length,
+      fetchedOkCount,
+      blockedOrFailedCount,
+      importableCount,
+      strongMatchCount,
+      reviewCount,
+      duplicateCount,
+      weakOrRejectedCount,
+      skippedResultCount: skippedResults?.length ?? 0,
+    },
+    topCandidates,
+    blockedOrFailed,
+    skippedResults,
+    actionSummary,
+  };
+}
+
+export function buildDiscoveryBacklog(
+  store: StoreFile,
+  limit = 10,
+): {
+  watchCount: number;
+  candidateCount: number;
+  highPriorityCount: number;
+  mediumPriorityCount: number;
+  backlog: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    host: string;
+    latestPrice?: number;
+    identityStrength: ReturnType<typeof getWatchIdentityStrength>["strength"];
+    identityScore: number;
+    matchCount: number;
+    activeSignals: string[];
+    recommendedAction: "search_new_retailers" | "expand_coverage" | "improve_identity_first";
+    priority: "high" | "medium" | "low";
+    priorityScore: number;
+    reasons: string[];
+  }>;
+  actionSummary: string[];
+} {
+  const scored = store.watches
+    .filter((watch) => watch.enabled)
+    .map((watch) => {
+      const identity = getWatchIdentityStrength(watch);
+      const market = buildMarketCheckSummary(store, watch);
+      const signals = buildWatchSignals(watch);
+      const reasons: string[] = [];
+      let priorityScore = 0;
+      let recommendedAction: "search_new_retailers" | "expand_coverage" | "improve_identity_first";
+
+      if (identity.strength === "none") {
+        recommendedAction = "improve_identity_first";
+        priorityScore += 5;
+        reasons.push("No durable identifiers are stored yet, so discovery would be low-confidence.");
+      } else if (market.matchCount === 0) {
+        recommendedAction = "search_new_retailers";
+        priorityScore += identity.strength === "high" ? 80 : identity.strength === "medium" ? 60 : 35;
+        reasons.push("No same-product matches exist in the current store.");
+      } else {
+        recommendedAction = "expand_coverage";
+        priorityScore += market.matchCount === 1 ? 35 : 15;
+        reasons.push(`Only ${market.matchCount} same-product ${market.matchCount === 1 ? "match exists" : "matches exist"} in the current store.`);
+      }
+
+      if (signals.length) {
+        priorityScore += 10;
+        reasons.push(`Active signals are present: ${signals.join(", ")}.`);
+      }
+      if (watch.lastSnapshot?.price != null) {
+        priorityScore += 10;
+        reasons.push("Latest snapshot has a current price, so new retailer comparisons would be immediately useful.");
+      }
+      if (identity.strength === "high") {
+        reasons.push("Stored identity strength is high enough for bounded discovery search.");
+      } else if (identity.strength === "medium") {
+        reasons.push("Stored identity strength is moderate; discovery is viable but should be reviewed carefully.");
+      } else if (identity.strength === "low") {
+        reasons.push("Stored identity strength is low; discovery may rely more on title/brand overlap.");
+      }
+
+      const priority: "high" | "medium" | "low" =
+        priorityScore >= 75 ? "high" : priorityScore >= 40 ? "medium" : "low";
+
+      return {
+        watchId: watch.id,
+        label: watch.label,
+        url: watch.url,
+        host: getWatchHost(watch.url),
+        latestPrice: watch.lastSnapshot?.price,
+        identityStrength: identity.strength,
+        identityScore: identity.score,
+        matchCount: market.matchCount,
+        activeSignals: signals,
+        recommendedAction,
+        priority,
+        priorityScore,
+        reasons,
+      };
+    })
+    .filter((entry) => entry.recommendedAction !== "expand_coverage" || entry.matchCount <= 2)
+    .sort((a, b) => b.priorityScore - a.priorityScore || a.url.localeCompare(b.url))
+    .slice(0, limit);
+
+  const highPriorityCount = scored.filter((entry) => entry.priority === "high").length;
+  const mediumPriorityCount = scored.filter((entry) => entry.priority === "medium").length;
+  const actionSummary: string[] = [];
+  if (scored[0]) {
+    actionSummary.push(`Start with ${scored[0].label ?? scored[0].watchId}; it has the strongest case for more discovery coverage.`);
+  }
+  if (highPriorityCount) {
+    actionSummary.push(`${highPriorityCount} watch${highPriorityCount === 1 ? "" : "es"} look like high-priority discovery targets.`);
+  }
+  if (scored.some((entry) => entry.recommendedAction === "improve_identity_first")) {
+    actionSummary.push("Some watches should improve stored identity first before wider discovery search.");
+  }
+
+  return {
+    watchCount: store.watches.length,
+    candidateCount: scored.length,
+    highPriorityCount,
+    mediumPriorityCount,
+    backlog: scored,
+    actionSummary,
   };
 }
 

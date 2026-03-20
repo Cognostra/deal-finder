@@ -18,6 +18,33 @@ const configSchema: OpenClawPluginConfigSchema = {
       fetcher: { enum: ["local", "firecrawl"] },
       firecrawlApiKey: { type: "string" },
       firecrawlBaseUrl: { type: "string" },
+      llmReview: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          mode: { enum: ["off", "queue", "auto_assist"] },
+          lowConfidenceThreshold: { type: "number", minimum: 0, maximum: 100 },
+          maxReviewsPerScan: { type: "integer", minimum: 0, maximum: 20 },
+          allowPriceRewrite: { type: "boolean" },
+          allowIdentityRewrite: { type: "boolean" },
+          provider: { type: "string" },
+          model: { type: "string" },
+          timeoutMs: { type: "integer", minimum: 1000, maximum: 300000 },
+        },
+      },
+      discovery: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          enabled: { type: "boolean" },
+          provider: { enum: ["off", "manual", "firecrawl-search"] },
+          maxSearchResults: { type: "integer", minimum: 1, maximum: 20 },
+          maxFetches: { type: "integer", minimum: 1, maximum: 25 },
+          allowedHosts: { type: "array", items: { type: "string" } },
+          blockedHosts: { type: "array", items: { type: "string" } },
+          timeoutMs: { type: "integer", minimum: 1000, maximum: 300000 },
+        },
+      },
     },
   },
 };

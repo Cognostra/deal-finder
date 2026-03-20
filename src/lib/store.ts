@@ -1,7 +1,19 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { SavedWatchView, ScanResultItem, StoreFile, Watch, WatchHistoryEntry, WatchImportSource, WatchSelector } from "../types.js";
+import type {
+  LlmReviewCandidateType,
+  ReviewedSnapshotField,
+  ReviewedSnapshotFieldName,
+  ReviewedSnapshotFieldValue,
+  SavedWatchView,
+  ScanResultItem,
+  StoreFile,
+  Watch,
+  WatchHistoryEntry,
+  WatchImportSource,
+  WatchSelector,
+} from "../types.js";
 
 const MAX_HISTORY_ENTRIES = 60;
 
@@ -195,7 +207,15 @@ export type ImportedWatchInput = {
 export type ImportMode = "append" | "upsert" | "replace";
 
 function cloneWatchSnapshot(snapshot: Watch["lastSnapshot"] | undefined): Watch["lastSnapshot"] {
-  return snapshot ? { ...snapshot } : undefined;
+  return snapshot
+    ? {
+        ...snapshot,
+        reviewedFields: snapshot.reviewedFields?.map((entry) => ({
+          ...entry,
+          reasons: entry.reasons ? [...entry.reasons] : undefined,
+        })),
+      }
+    : undefined;
 }
 
 function cloneHistory(history: WatchHistoryEntry[] | undefined): WatchHistoryEntry[] | undefined {
@@ -310,7 +330,78 @@ export type WatchSnapshotPatch = {
   currency?: string | null;
   rawSnippet?: string | null;
   fetchedAt?: string;
+  provenance?: {
+    reviewSource: string;
+    reviewedAt?: string;
+    candidateType?: LlmReviewCandidateType;
+    provider?: string;
+    model?: string;
+    reasons?: string[];
+  };
 };
+
+const SNAPSHOT_PATCH_FIELDS: ReviewedSnapshotFieldName[] = [
+  "title",
+  "canonicalTitle",
+  "brand",
+  "modelId",
+  "sku",
+  "mpn",
+  "gtin",
+  "asin",
+  "price",
+  "currency",
+  "rawSnippet",
+];
+
+function toReviewedValue(value: string | number | null | undefined): ReviewedSnapshotFieldValue {
+  return value ?? null;
+}
+
+function mergeReviewedSnapshotFields(
+  existing: ReviewedSnapshotField[] | undefined,
+  patch: WatchSnapshotPatch,
+  previousSnapshot: Watch["lastSnapshot"] | undefined,
+  nextSnapshot: Watch["lastSnapshot"],
+): ReviewedSnapshotField[] | undefined {
+  const provenance = patch.provenance;
+  if (!provenance || !nextSnapshot) {
+    return existing;
+  }
+
+  const changedEntries = SNAPSHOT_PATCH_FIELDS.flatMap((field) => {
+    if (!(field in patch)) return [];
+    const beforeValue = previousSnapshot?.[field];
+    const afterValue = nextSnapshot[field];
+    if (beforeValue === afterValue) return [];
+    return [{
+      field,
+      originalValue: toReviewedValue(beforeValue),
+      reviewedValue: toReviewedValue(afterValue),
+      reviewSource: provenance.reviewSource,
+      reviewedAt: provenance.reviewedAt ?? new Date().toISOString(),
+      candidateType: provenance.candidateType,
+      provider: provenance.provider,
+      model: provenance.model,
+      reasons: provenance.reasons ? [...provenance.reasons] : undefined,
+    } satisfies ReviewedSnapshotField];
+  });
+
+  if (!changedEntries.length) {
+    return existing;
+  }
+
+  const byField = new Map<ReviewedSnapshotFieldName, ReviewedSnapshotField>(
+    (existing ?? []).map((entry) => [entry.field, { ...entry, reasons: entry.reasons ? [...entry.reasons] : undefined }]),
+  );
+  for (const entry of changedEntries) {
+    byField.set(entry.field, entry);
+  }
+  return SNAPSHOT_PATCH_FIELDS.flatMap((field) => {
+    const entry = byField.get(field);
+    return entry ? [entry] : [];
+  });
+}
 
 export function updateWatch(store: StoreFile, id: string, patch: WatchUpdatePatch): Watch | undefined {
   const watch = getWatch(store, id);
@@ -334,6 +425,7 @@ export function applyWatchSnapshotPatch(store: StoreFile, id: string, patch: Wat
   const watch = getWatch(store, id);
   if (!watch) return undefined;
 
+  const previousSnapshot = watch.lastSnapshot ? cloneWatchSnapshot(watch.lastSnapshot) : undefined;
   const nextSnapshot = watch.lastSnapshot
     ? { ...watch.lastSnapshot }
     : { fetchedAt: patch.fetchedAt ?? new Date().toISOString() };
@@ -350,6 +442,7 @@ export function applyWatchSnapshotPatch(store: StoreFile, id: string, patch: Wat
   if ("currency" in patch) nextSnapshot.currency = patch.currency ?? undefined;
   if ("rawSnippet" in patch) nextSnapshot.rawSnippet = patch.rawSnippet ?? undefined;
   if ("fetchedAt" in patch && patch.fetchedAt) nextSnapshot.fetchedAt = patch.fetchedAt;
+  nextSnapshot.reviewedFields = mergeReviewedSnapshotFields(previousSnapshot?.reviewedFields, patch, previousSnapshot, nextSnapshot);
 
   watch.lastSnapshot = nextSnapshot;
   return watch;
@@ -540,19 +633,86 @@ function expectOptionalImportSource(value: unknown): WatchImportSource | undefin
     throw new Error('deal-hunter: imported watch field "importSource" must be an object when present');
   }
   const obj = value as Record<string, unknown>;
-  if (obj.type !== "url") {
-    throw new Error('deal-hunter: imported watch field "importSource.type" must be "url"');
+  if (obj.type === "url") {
+    const url = expectOptionalString(obj.url, "importSource.url");
+    const importedAt = expectOptionalString(obj.importedAt, "importSource.importedAt");
+    if (!url || !importedAt) {
+      throw new Error('deal-hunter: imported watch field "importSource" requires both url and importedAt');
+    }
+    return {
+      type: "url",
+      url,
+      importedAt,
+    };
   }
-  const url = expectOptionalString(obj.url, "importSource.url");
-  const importedAt = expectOptionalString(obj.importedAt, "importSource.importedAt");
-  if (!url || !importedAt) {
-    throw new Error('deal-hunter: imported watch field "importSource" requires both url and importedAt');
+  if (obj.type === "discovery") {
+    const importedAt = expectOptionalString(obj.importedAt, "importSource.importedAt");
+    const discoveryProvider = expectOptionalString(obj.discoveryProvider, "importSource.discoveryProvider");
+    const sourceWatchId = expectOptionalString(obj.sourceWatchId, "importSource.sourceWatchId");
+    const sourceWatchUrl = expectOptionalString(obj.sourceWatchUrl, "importSource.sourceWatchUrl");
+    const candidateUrl = expectOptionalString(obj.candidateUrl, "importSource.candidateUrl");
+    if (
+      !importedAt ||
+      !sourceWatchId ||
+      !sourceWatchUrl ||
+      !candidateUrl ||
+      (discoveryProvider !== "manual" && discoveryProvider !== "firecrawl-search")
+    ) {
+      throw new Error('deal-hunter: imported discovery "importSource" requires importedAt, discoveryProvider, sourceWatchId, sourceWatchUrl, and candidateUrl');
+    }
+    return {
+      type: "discovery",
+      importedAt,
+      discoveryProvider,
+      sourceWatchId,
+      sourceWatchUrl,
+      sourceWatchLabel: expectOptionalString(obj.sourceWatchLabel, "importSource.sourceWatchLabel"),
+      candidateUrl,
+      searchQuery: expectOptionalString(obj.searchQuery, "importSource.searchQuery"),
+      searchRank:
+        typeof obj.searchRank === "number" && Number.isInteger(obj.searchRank) && obj.searchRank > 0
+          ? obj.searchRank
+          : undefined,
+      searchTitle: expectOptionalString(obj.searchTitle, "importSource.searchTitle"),
+      searchDescription: expectOptionalString(obj.searchDescription, "importSource.searchDescription"),
+    };
   }
-  return {
-    type: "url",
-    url,
-    importedAt,
-  };
+  throw new Error('deal-hunter: imported watch field "importSource.type" must be "url" or "discovery"');
+}
+
+function expectOptionalReviewedFields(value: unknown): ReviewedSnapshotField[] | undefined {
+  if (value == null) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error('deal-hunter: imported watch field "lastSnapshot.reviewedFields" must be an array when present');
+  }
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`deal-hunter: imported reviewed field at index ${index} must be an object`);
+    }
+    const obj = entry as Record<string, unknown>;
+    const field = expectOptionalString(obj.field, `lastSnapshot.reviewedFields[${index}].field`) as ReviewedSnapshotFieldName | undefined;
+    const reviewSource = expectOptionalString(obj.reviewSource, `lastSnapshot.reviewedFields[${index}].reviewSource`);
+    const reviewedAt = expectOptionalString(obj.reviewedAt, `lastSnapshot.reviewedFields[${index}].reviewedAt`);
+    if (!field || !reviewSource || !reviewedAt) {
+      throw new Error(`deal-hunter: imported reviewed field at index ${index} requires field, reviewSource, and reviewedAt`);
+    }
+    const readValue = (candidate: unknown, fieldName: string): ReviewedSnapshotFieldValue => {
+      if (candidate == null) return null;
+      if (typeof candidate === "string" || typeof candidate === "number") return candidate;
+      throw new Error(`deal-hunter: imported reviewed field "${fieldName}" must be a string, number, or null`);
+    };
+    return {
+      field,
+      originalValue: readValue(obj.originalValue, `lastSnapshot.reviewedFields[${index}].originalValue`),
+      reviewedValue: readValue(obj.reviewedValue, `lastSnapshot.reviewedFields[${index}].reviewedValue`),
+      reviewSource,
+      reviewedAt,
+      candidateType: expectOptionalString(obj.candidateType, `lastSnapshot.reviewedFields[${index}].candidateType`) as LlmReviewCandidateType | undefined,
+      provider: expectOptionalString(obj.provider, `lastSnapshot.reviewedFields[${index}].provider`),
+      model: expectOptionalString(obj.model, `lastSnapshot.reviewedFields[${index}].model`),
+      reasons: expectOptionalStringArray(obj.reasons, `lastSnapshot.reviewedFields[${index}].reasons`),
+    };
+  });
 }
 
 function expectOptionalLastSnapshot(value: unknown): Watch["lastSnapshot"] {
@@ -581,6 +741,7 @@ function expectOptionalLastSnapshot(value: unknown): Watch["lastSnapshot"] {
     contentHash: expectOptionalString(obj.contentHash, "lastSnapshot.contentHash"),
     fetchedAt,
     rawSnippet: expectOptionalString(obj.rawSnippet, "lastSnapshot.rawSnippet"),
+    reviewedFields: expectOptionalReviewedFields(obj.reviewedFields),
   };
 }
 

@@ -12,6 +12,55 @@ export type DealHunterPluginConfig = {
   fetcher?: "local" | "firecrawl";
   firecrawlApiKey?: string;
   firecrawlBaseUrl?: string;
+  llmReview?: {
+    mode?: LlmReviewMode;
+    lowConfidenceThreshold?: number;
+    maxReviewsPerScan?: number;
+    allowPriceRewrite?: boolean;
+    allowIdentityRewrite?: boolean;
+    provider?: string;
+    model?: string;
+    timeoutMs?: number;
+  };
+  discovery?: {
+    enabled?: boolean;
+    provider?: DiscoveryProvider;
+    maxSearchResults?: number;
+    maxFetches?: number;
+    allowedHosts?: string[];
+    blockedHosts?: string[];
+    timeoutMs?: number;
+  };
+};
+
+export type LlmReviewMode = "off" | "queue" | "auto_assist";
+export type DiscoveryProvider = "off" | "manual" | "firecrawl-search";
+
+export type ReviewedSnapshotFieldName =
+  | "title"
+  | "canonicalTitle"
+  | "brand"
+  | "modelId"
+  | "sku"
+  | "mpn"
+  | "gtin"
+  | "asin"
+  | "price"
+  | "currency"
+  | "rawSnippet";
+
+export type ReviewedSnapshotFieldValue = string | number | null;
+
+export type ReviewedSnapshotField = {
+  field: ReviewedSnapshotFieldName;
+  originalValue: ReviewedSnapshotFieldValue;
+  reviewedValue: ReviewedSnapshotFieldValue;
+  reviewSource: string;
+  reviewedAt: string;
+  candidateType?: LlmReviewCandidateType;
+  provider?: string;
+  model?: string;
+  reasons?: string[];
 };
 
 export type WatchSnapshot = {
@@ -30,6 +79,7 @@ export type WatchSnapshot = {
   contentHash?: string;
   fetchedAt: string;
   rawSnippet?: string;
+  reviewedFields?: ReviewedSnapshotField[];
 };
 
 export type ProductIdentityField = "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin";
@@ -37,6 +87,50 @@ export type ProductIdentityField = "brand" | "modelId" | "sku" | "mpn" | "gtin" 
 export type ProductIdentityEntry = {
   field: ProductIdentityField;
   value: string;
+};
+
+export type ProductMatchStrength = "low" | "medium" | "high";
+
+export type ProductMatchCandidate = {
+  watchId: string;
+  label?: string;
+  url: string;
+  latestPrice?: number;
+  sharedFields: ProductIdentityField[];
+  conflictingFields: ProductIdentityField[];
+  matchScore: number;
+  matchStrength: ProductMatchStrength;
+  matchReasons: string[];
+  matchWarnings: string[];
+};
+
+export type DiscoveryCandidate = {
+  url: string;
+  host: string;
+  sourceWatchId: string;
+  searchQuery?: string;
+  searchRank?: number;
+  searchTitle?: string;
+  searchDescription?: string;
+  matchScore?: number;
+  matchStrength?: ProductMatchStrength;
+  matchedFields: ProductIdentityField[];
+  conflictingFields: ProductIdentityField[];
+  matchReasons: string[];
+  matchWarnings: string[];
+  extractedTitle?: string;
+  canonicalTitle?: string;
+  brand?: string;
+  modelId?: string;
+  sku?: string;
+  mpn?: string;
+  gtin?: string;
+  asin?: string;
+  price?: number;
+  currency?: string;
+  fetchStatus: "ok" | "blocked" | "failed";
+  blockedReason?: string;
+  recommendedAction: "strong_candidate_for_import" | "review_before_import" | "likely_not_same_product" | "blocked_or_failed";
 };
 
 export type WatchHistoryEntry = {
@@ -52,11 +146,25 @@ export type WatchHistoryEntry = {
   summaryLine?: string;
 };
 
-export type WatchImportSource = {
-  type: "url";
-  url: string;
-  importedAt: string;
-};
+export type WatchImportSource =
+  | {
+      type: "url";
+      url: string;
+      importedAt: string;
+    }
+  | {
+      type: "discovery";
+      importedAt: string;
+      discoveryProvider: Exclude<DiscoveryProvider, "off">;
+      sourceWatchId: string;
+      sourceWatchUrl: string;
+      sourceWatchLabel?: string;
+      candidateUrl: string;
+      searchQuery?: string;
+      searchRank?: number;
+      searchTitle?: string;
+      searchDescription?: string;
+    };
 
 export type WatchSearchSortBy = "createdAt" | "label" | "price";
 
@@ -211,4 +319,12 @@ export type ScanResultItem = {
   after?: WatchSnapshot;
   extracted?: ExtractedListing;
   alerts: string[];
+  reviewMode: LlmReviewMode;
+  reviewQueued: boolean;
+  reviewApplied: boolean;
+  reviewWarnings: string[];
+  reviewedFields: ReviewedSnapshotFieldName[];
+  reviewProvider?: string;
+  reviewModel?: string;
+  reviewCandidateType?: LlmReviewCandidateType;
 };

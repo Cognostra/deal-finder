@@ -74,6 +74,25 @@ function makeConfig(overrides: Partial<ResolvedDealConfig> = {}): ResolvedDealCo
     blockedHosts: undefined,
     firecrawlApiKey: undefined,
     firecrawlBaseUrl: "https://api.firecrawl.dev",
+    llmReview: {
+      mode: "off",
+      lowConfidenceThreshold: 45,
+      maxReviewsPerScan: 3,
+      allowPriceRewrite: false,
+      allowIdentityRewrite: true,
+      provider: undefined,
+      model: undefined,
+      timeoutMs: 30_000,
+    },
+    discovery: {
+      enabled: false,
+      provider: "off",
+      maxSearchResults: 5,
+      maxFetches: 5,
+      allowedHosts: undefined,
+      blockedHosts: undefined,
+      timeoutMs: 25_000,
+    },
     ...overrides,
   };
 }

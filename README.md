@@ -178,11 +178,20 @@ agents: {
 | `deal_workflow_cleanup` | Surface duplicates, stale/disabled items, weak extraction cases, and noisy cleanup candidates. |
 | `deal_workflow_best_opportunities` | Rank top likely-real deals, suspicious glitches, strongest alerts, and same-product price spreads. |
 | `deal_health` | Show configuration, storage, safety posture, and operational recommendations. |
+| `deal_review_policy` | Show the effective scan-time review mode, thresholds, rewrite rules, and whether automatic model review is active. |
 | `deal_history` | Show per-watch price history, recent deltas, and lowest/highest seen prices. |
 | `deal_alerts` | Rank current threshold, keyword, and recent high-severity watch signals. |
 | `deal_trends` | Summarize falling, rising, flat, and volatile watches with compact sparklines. |
 | `deal_top_drops` | Rank the strongest deals by discount from peak or the latest committed drop. |
 | `deal_market_check` | Compare one watch against likely same-product watches already in the current store. |
+| `deal_market_check_candidates` | Fetch explicit candidate URLs and compare them against one anchor watch before you add or import anything. |
+| `deal_discovery_backlog` | Rank which enabled watches most need broader same-product coverage and explain why. |
+| `deal_discovery_policy` | Show the effective discovery mode, budgets, trusted-host posture, and provider readiness. |
+| `deal_discovery_report` | Run discovery and return a compact summary of the best candidates, duplicates, blocked results, and import recommendations. |
+| `deal_discovery_search` | Run bounded provider-backed discovery search on explicit trusted retailer hosts and return candidate URLs. |
+| `deal_discovery_fetch` | Fetch explicit candidate URLs, extract them safely, and rank likely same-product matches. |
+| `deal_discovery_run` | Run bounded discovery search or explicit-candidate fetch/ranking, prepare import decisions, and include a compact report. |
+| `deal_discovery_import` | Import approved discovery candidates as new watches, with dry-run preview and compact discovery report by default. |
 | `deal_product_groups` | Cluster likely same-product watches across the store or a saved view and summarize group spreads. |
 | `deal_best_price_board` | Rank grouped same-product opportunities by current internal spread and best-known watch. |
 | `deal_llm_review_queue` | Prepare low-confidence extraction or identity cases for optional manual or `llm-task` JSON review. |
@@ -213,17 +222,24 @@ Recommended first-run workflow:
 13. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
 14. `deal_scan` with `commit: true` to capture snapshots, then `deal_view_scan` when you want to scan only one saved slice.
 15. `deal_view_report`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
-16. `deal_product_groups` and `deal_best_price_board` once you have multiple same-product watches across retailers.
-17. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
-18. `deal_llm_review_queue` if weak extraction or identity cases still need optional model-assisted review.
-19. `deal_llm_review_run` when you want one queued review executed immediately through your current OpenClaw model setup.
-20. `deal_llm_review_apply` in `dryRun: true` mode before writing reviewed extraction or identity fields back to a watch snapshot.
-21. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
-22. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-23. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
-24. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
-25. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-26. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+16. `deal_market_check_candidates` when you have a few explicit retailer URLs and want same-product evidence before adding them as watches.
+17. `deal_discovery_backlog` to decide which enabled watches most deserve discovery effort first.
+18. `deal_discovery_policy` if you want to verify the current discovery mode, host allowlists, and search/fetch budgets before running discovery tools.
+19. `deal_discovery_report` when you want the smallest, decision-ready discovery summary before drilling into raw candidates.
+20. `deal_discovery_search` first if `discovery.provider` is `firecrawl-search` and you want bounded candidates from a few trusted retailer hosts.
+21. `deal_discovery_run` when you want bounded discovery scoring and import preview from either explicit candidate URLs or provider-backed search.
+22. `deal_discovery_import` in `dryRun: true` mode before adding any discovery candidates as real watches.
+23. `deal_product_groups` and `deal_best_price_board` once you have multiple same-product watches across retailers.
+24. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
+25. `deal_llm_review_queue` if weak extraction or identity cases still need optional model-assisted review.
+26. `deal_llm_review_run` when you want one queued review executed immediately through your current OpenClaw model setup.
+27. `deal_llm_review_apply` in `dryRun: true` mode before writing reviewed extraction or identity fields back to a watch snapshot.
+28. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
+29. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+30. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+31. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+32. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+33. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -231,8 +247,9 @@ Recommended first-run workflow:
 - `previousPrice`, `currentPrice`, `priceDelta`, `percentDelta`
 - `alertSeverity`, `alertScore`, `extractionConfidence`
 - `fetchSource`, `fetchSourceNote`
+- `reviewMode`, `reviewQueued`, `reviewApplied`, `reviewedFields`, `reviewWarnings`
 - `summaryLine`
-- top-level `summary` and `rankedAlerts`
+- top-level `summary`, `rankedAlerts`, and aggregate `reviewWarnings`
 
 Snapshot and extraction metadata also include `canonicalTitle`, which normalizes cosmetic title differences for cleaner watch metadata and more stable agent summaries.
 
@@ -245,6 +262,16 @@ Snapshots can now also persist product identity hints when the page exposes them
 - `gtin`
 - `asin`
 
+Reviewed snapshot updates can also persist field-level provenance when you apply an extraction or identity review:
+
+- original value
+- reviewed value
+- review source
+- review timestamp
+- optional candidate type, provider, model, and reasons
+
+`deal_llm_review_apply` now writes that provenance onto the snapshot, and still supports `dryRun: true` before any write.
+
 The current retailer-aware extractor pack includes fixture-backed support for:
 
 - Amazon-style product pages
@@ -254,6 +281,8 @@ The current retailer-aware extractor pack includes fixture-backed support for:
 - Walmart-style product pages
 - Newegg-style product pages
 - Home Depot-style product pages
+- Costco-style product pages
+- Lowe's-style product pages
 
 `deal_extraction_debug` now shows:
 
@@ -281,6 +310,12 @@ The analytics tools add:
 - `deal_trends` for compact per-watch direction and volatility summaries
 - `deal_top_drops` for ranking discounts against historical peaks or the latest committed move
 - `deal_market_check` for comparing likely same-product watches already in your own watch store
+- `deal_market_check_candidates` for testing a few explicit retailer URLs against an anchor watch before you import or add them
+- `deal_discovery_backlog` for ranking which enabled watches most need broader same-product coverage
+- `deal_discovery_policy` for checking whether discovery is off, manual-only, or provider-backed and what host/budget rules are active
+- `deal_discovery_report` for a compact discovery decision summary with best candidates, duplicates, and blocked results
+- `deal_discovery_search` for bounded provider-backed search across explicit trusted retailer hosts
+- `deal_discovery_fetch`, `deal_discovery_run`, and `deal_discovery_import` for bounded discovery workflows with explicit review before import
 - `deal_product_groups` for clustering likely same-product watches into explainable groups
 - `deal_best_price_board` for ranking current best-known internal prices by grouped market spread
 - `deal_llm_review_queue` for preparing optional JSON-only review payloads when extraction or identity still looks ambiguous
@@ -288,23 +323,82 @@ The analytics tools add:
 - `deal_watch_identity` for stored product identifiers and same-product watch matching inside the current store
 - `deal_schedule_advice` for host-level or watch-level scan cadence suggestions
 
+Same-product matching is now more explicit in its evidence:
+
+- shared identity fields
+- conflicting identity fields
+- match score and match strength
+- match reasons and match warnings
+
 `deal_alerts` now includes `glitchScore` and `glitchReasons` so small models can distinguish normal threshold hits from suspicious freebie-like results.
+
+`deal_health` and `deal_doctor` now also surface discovery/review posture, including:
+
+- whether discovery is off, manual, or `firecrawl-search`
+- whether provider-backed discovery is missing a Firecrawl API key or explicit trusted hosts
+- whether scan-time review is `off`, `queue`, or `auto_assist`
 
 ## Optional intelligence path
 
-Deal Hunter does **not** auto-invoke an LLM fallback inside scans today.
+Deal Hunter now supports a scan-time review policy that is still **off by default**.
 
-That is intentional:
+Modes:
+
+- `off`: normal safe default; scans never auto-invoke a model
+- `queue`: low-confidence scans are marked for review, but no model is invoked
+- `auto_assist`: low-confidence scans can trigger bounded automatic review with explicit provenance
+
+Bounded same-product discovery is also available now in two explicit modes:
+
+- `manual`
+  - enable `discovery.enabled`
+  - set `discovery.provider` to `"manual"`
+  - pass explicit candidate URLs to `deal_discovery_fetch`, `deal_discovery_run`, or `deal_discovery_import`
+- `firecrawl-search`
+  - enable `discovery.enabled`
+  - set `discovery.provider` to `"firecrawl-search"`
+  - configure `firecrawlApiKey`
+  - provide explicit trusted retailer hosts through `discovery.allowedHosts` or tool parameters
+  - use `deal_discovery_policy` to verify the active posture
+  - use `deal_discovery_search`, `deal_discovery_run`, or `deal_discovery_import`
+
+Even in `firecrawl-search` mode, discovery remains bounded:
+
+- no recursive crawling
+- no automatic import
+- no provider-backed search without explicit trusted hosts
+- all fetched result URLs still pass the normal URL and redirect safety policy
+
+Imported discovery watches also retain provenance in `importSource`, including the anchor watch, provider mode, candidate URL, and any search query/rank metadata that led to the import.
+
+`deal_sample_setup` now includes example config blocks for:
+
+- baseline local fetch mode
+- manual discovery mode
+- Firecrawl-backed bounded discovery mode
+- queue-only review policy
+- bounded `auto_assist` review policy
+
+That default posture is intentional:
 
 - the clean built-in OpenClaw route is the bundled `llm-task` extension
 - current `llm-task` docs describe it as a bundled extension, not a stable community-plugin dependency surface
 - this package stays install-safe and provider-agnostic by avoiding a hidden runtime dependency on another plugin
 
-Instead, the plugin exposes an explicit opt-in review path:
+Instead, the plugin exposes explicit opt-in review paths:
 
 - `deal_llm_review_queue` prepares the exact cases that would benefit from optional review
 - `deal_llm_review_run` executes one queued case through the embedded OpenClaw runtime using your current provider/model setup or explicit overrides
 - `deal_llm_review_apply` lets you write reviewed fields back to the watch snapshot with a dry-run-first preview
+- `deal_review_policy` shows the active scan-time review mode and thresholds
+
+If you enable queue or auto-assist in plugin config, low-confidence scan results will now expose:
+
+- whether review was queued
+- whether review was applied
+- which fields were reviewed
+- any review warnings
+- provider/model metadata when auto-assist actually ran
 
 The queue still matters because it keeps the expensive path narrow and explainable. It identifies:
 

@@ -126,6 +126,14 @@ describe("store", () => {
       brand: "Acme",
       modelId: "W-1",
       price: 18,
+      provenance: {
+        reviewSource: "deal_llm_review_apply",
+        candidateType: "extraction_review",
+        provider: "ollama",
+        model: "qwen2.5:1.5b",
+        reasons: ["Low-confidence extraction was manually reviewed."],
+        reviewedAt: "2026-03-20T01:00:00.000Z",
+      },
     });
 
     expect(updated?.lastSnapshot).toMatchObject({
@@ -137,6 +145,63 @@ describe("store", () => {
       currency: "USD",
       fetchedAt: "2026-03-20T00:00:00.000Z",
     });
+    expect(updated?.lastSnapshot?.reviewedFields).toEqual([
+      {
+        field: "title",
+        originalValue: "Old Title",
+        reviewedValue: "New Title",
+        reviewSource: "deal_llm_review_apply",
+        reviewedAt: "2026-03-20T01:00:00.000Z",
+        candidateType: "extraction_review",
+        provider: "ollama",
+        model: "qwen2.5:1.5b",
+        reasons: ["Low-confidence extraction was manually reviewed."],
+      },
+      {
+        field: "canonicalTitle",
+        originalValue: "old title",
+        reviewedValue: "new title",
+        reviewSource: "deal_llm_review_apply",
+        reviewedAt: "2026-03-20T01:00:00.000Z",
+        candidateType: "extraction_review",
+        provider: "ollama",
+        model: "qwen2.5:1.5b",
+        reasons: ["Low-confidence extraction was manually reviewed."],
+      },
+      {
+        field: "brand",
+        originalValue: null,
+        reviewedValue: "Acme",
+        reviewSource: "deal_llm_review_apply",
+        reviewedAt: "2026-03-20T01:00:00.000Z",
+        candidateType: "extraction_review",
+        provider: "ollama",
+        model: "qwen2.5:1.5b",
+        reasons: ["Low-confidence extraction was manually reviewed."],
+      },
+      {
+        field: "modelId",
+        originalValue: null,
+        reviewedValue: "W-1",
+        reviewSource: "deal_llm_review_apply",
+        reviewedAt: "2026-03-20T01:00:00.000Z",
+        candidateType: "extraction_review",
+        provider: "ollama",
+        model: "qwen2.5:1.5b",
+        reasons: ["Low-confidence extraction was manually reviewed."],
+      },
+      {
+        field: "price",
+        originalValue: 20,
+        reviewedValue: 18,
+        reviewSource: "deal_llm_review_apply",
+        reviewedAt: "2026-03-20T01:00:00.000Z",
+        candidateType: "extraction_review",
+        provider: "ollama",
+        model: "qwen2.5:1.5b",
+        reasons: ["Low-confidence extraction was manually reviewed."],
+      },
+    ]);
   });
 
   it("bulk-enables and reports missing watch ids", async () => {
@@ -199,6 +264,11 @@ describe("store", () => {
         contentHash: "hash-1",
       },
       alerts: [],
+      reviewMode: "off",
+      reviewQueued: false,
+      reviewApplied: false,
+      reviewWarnings: [],
+      reviewedFields: [],
     });
 
     const duplicateState = appendWatchHistory(watch, {
@@ -224,6 +294,11 @@ describe("store", () => {
         contentHash: "hash-1",
       },
       alerts: [],
+      reviewMode: "off",
+      reviewQueued: false,
+      reviewApplied: false,
+      reviewWarnings: [],
+      reviewedFields: [],
     });
 
     const changedAgain = appendWatchHistory(watch, {
@@ -249,6 +324,11 @@ describe("store", () => {
         contentHash: "hash-2",
       },
       alerts: ["price_drop_25.0_percent"],
+      reviewMode: "off",
+      reviewQueued: false,
+      reviewApplied: false,
+      reviewWarnings: [],
+      reviewedFields: [],
     });
 
     expect(firstChanged).toBe(true);
@@ -457,6 +537,44 @@ describe("store", () => {
         ],
       },
     ]);
+  });
+
+  it("parses discovery import source metadata", () => {
+    const parsed = parseImportedWatchPayload({
+      watches: [
+        {
+          url: "https://shop-b.test/product/2",
+          label: "Discovered Widget",
+          importSource: {
+            type: "discovery",
+            importedAt: "2026-03-20T11:00:00.000Z",
+            discoveryProvider: "firecrawl-search",
+            sourceWatchId: "watch-1",
+            sourceWatchUrl: "https://shop-a.test/product/1",
+            sourceWatchLabel: "Anchor Widget",
+            candidateUrl: "https://shop-b.test/product/2",
+            searchQuery: "widget site:shop-b.test",
+            searchRank: 2,
+            searchTitle: "Widget Listing",
+            searchDescription: "Widget description",
+          },
+        },
+      ],
+    });
+
+    expect(parsed[0]?.importSource).toEqual({
+      type: "discovery",
+      importedAt: "2026-03-20T11:00:00.000Z",
+      discoveryProvider: "firecrawl-search",
+      sourceWatchId: "watch-1",
+      sourceWatchUrl: "https://shop-a.test/product/1",
+      sourceWatchLabel: "Anchor Widget",
+      candidateUrl: "https://shop-b.test/product/2",
+      searchQuery: "widget site:shop-b.test",
+      searchRank: 2,
+      searchTitle: "Widget Listing",
+      searchDescription: "Widget description",
+    });
   });
 
   it("rejects malformed remote import payloads", () => {

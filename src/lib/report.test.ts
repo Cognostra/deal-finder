@@ -4,6 +4,8 @@ import type { StoreFile } from "../types.js";
 import {
   buildAlertsSummary,
   buildBestPriceBoard,
+  buildDiscoveryBacklog,
+  buildDiscoveryReport,
   buildDoctorSummary,
   buildHealthSummary,
   buildHostReportSummary,
@@ -146,6 +148,25 @@ const cfg: ResolvedDealConfig = {
   fetcher: "local",
   firecrawlApiKey: undefined,
   firecrawlBaseUrl: "https://api.firecrawl.dev",
+  llmReview: {
+    mode: "off",
+    lowConfidenceThreshold: 45,
+    maxReviewsPerScan: 3,
+    allowPriceRewrite: false,
+    allowIdentityRewrite: true,
+    provider: undefined,
+    model: undefined,
+    timeoutMs: 30_000,
+  },
+  discovery: {
+    enabled: false,
+    provider: "off",
+    maxSearchResults: 5,
+    maxFetches: 5,
+    allowedHosts: undefined,
+    blockedHosts: undefined,
+    timeoutMs: 25_000,
+  },
 };
 
 describe("buildStoreReport", () => {
@@ -179,6 +200,9 @@ describe("buildHealthSummary", () => {
       watchCount: 3,
       enabledCount: 2,
       fetcher: "local",
+      discoveryEnabled: false,
+      discoveryProvider: "off",
+      reviewMode: "off",
       blockedHostsConfigured: true,
       allowedHostsConfigured: false,
     });
@@ -191,6 +215,8 @@ describe("buildDoctorSummary", () => {
     const doctor = buildDoctorSummary(store, cfg, cfg.storePath);
     expect(doctor.issueCount).toBeGreaterThan(0);
     expect(doctor.recommendedCommands).toContain("deal_help");
+    expect(doctor.recommendedCommands).toContain("deal_discovery_policy");
+    expect(doctor.recommendedCommands).toContain("deal_review_policy");
   });
 });
 
@@ -206,8 +232,14 @@ describe("buildSampleSetup", () => {
     expect(sample.allowlist).toContain("deal_watch_import_url");
     expect(sample.allowlist).toContain("deal_saved_view_create");
     expect(sample.allowlist).toContain("deal_market_check");
+    expect(sample.allowlist).toContain("deal_discovery_backlog");
+    expect(sample.allowlist).toContain("deal_discovery_report");
     expect(sample.allowlist).toContain("deal_llm_review_run");
     expect(sample.allowlist).toContain("deal_llm_review_apply");
+    expect(sample.discoveryExamples.manual.plugins.entries["openclaw-deal-hunter"].config.discovery.provider).toBe("manual");
+    expect(sample.discoveryExamples.firecrawlSearch.plugins.entries["openclaw-deal-hunter"].config.discovery.provider).toBe("firecrawl-search");
+    expect(sample.reviewExamples.queueOnly.plugins.entries["openclaw-deal-hunter"].config.llmReview.mode).toBe("queue");
+    expect(sample.reviewExamples.autoAssist.plugins.entries["openclaw-deal-hunter"].config.llmReview.mode).toBe("auto_assist");
     expect(sample.examplePrompts.length).toBeGreaterThan(0);
   });
 });
@@ -425,6 +457,8 @@ describe("buildWatchIdentitySummary", () => {
     expect(summary.relatedWatches[0]).toMatchObject({
       watchId: "watch-b",
       sharedFields: ["brand", "modelId"],
+      conflictingFields: [],
+      matchStrength: "high",
     });
   });
 });
@@ -496,8 +530,64 @@ describe("buildMarketCheckSummary", () => {
     });
     expect(summary.matches[0]).toMatchObject({
       watchId: "watch-b",
-      matchScore: 100,
+      matchScore: 90,
+      matchStrength: "high",
+      conflictingFields: [],
     });
+  });
+});
+
+describe("buildMarketCheckSummary conflict evidence", () => {
+  it("surfaces conflicting identifiers in candidate matches", () => {
+    const marketStore: StoreFile = {
+      version: 2,
+      savedViews: [],
+      watches: [
+        {
+          id: "watch-a",
+          url: "http://shop.test/a",
+          label: "Console A",
+          enabled: true,
+          createdAt: "2026-03-20T00:00:00.000Z",
+          lastSnapshot: {
+            title: "Nintendo Switch OLED",
+            canonicalTitle: "nintendo switch oled",
+            brand: "Nintendo",
+            modelId: "HEG-001",
+            sku: "111111",
+            price: 349.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:00:00.000Z",
+          },
+        },
+        {
+          id: "watch-b",
+          url: "http://shop.test/b",
+          label: "Console B",
+          enabled: true,
+          createdAt: "2026-03-20T00:05:00.000Z",
+          lastSnapshot: {
+            title: "Nintendo Switch OLED",
+            canonicalTitle: "nintendo switch oled",
+            brand: "Nintendo",
+            modelId: "HEG-001",
+            sku: "222222",
+            price: 329.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:05:00.000Z",
+          },
+        },
+      ],
+    };
+
+    const summary = buildMarketCheckSummary(marketStore, marketStore.watches[0]!);
+    expect(summary.matches[0]).toMatchObject({
+      watchId: "watch-b",
+      sharedFields: ["brand", "modelId"],
+      conflictingFields: ["sku"],
+    });
+    expect(summary.matches[0]?.matchWarnings[0]).toContain("Conflicting sku");
+    expect(summary.reasons.some((reason) => reason.includes("identifier conflict"))).toBe(true);
   });
 });
 
@@ -734,6 +824,148 @@ describe("buildWorkflowBestOpportunities", () => {
       glitchScore: 95,
     });
     expect(summary.strongestAlerts.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildDiscoveryReport", () => {
+  it("summarizes discovery candidates, duplicates, and blocked results", () => {
+    const report = buildDiscoveryReport({
+      watch: store.watches[0]!,
+      provider: "manual",
+      candidates: [
+        {
+          url: "https://shop-b.test/product/2",
+          host: "shop-b.test",
+          sourceWatchId: "watch-1",
+          matchScore: 94,
+          matchStrength: "high",
+          matchedFields: ["brand", "mpn"],
+          conflictingFields: [],
+          matchReasons: ["Shared mpn=RB-1."],
+          matchWarnings: [],
+          extractedTitle: "Rare Book Special Edition",
+          price: 12,
+          currency: "USD",
+          fetchStatus: "ok",
+          recommendedAction: "strong_candidate_for_import",
+        },
+        {
+          url: "https://shop.test/a",
+          host: "shop.test",
+          sourceWatchId: "watch-1",
+          matchScore: 91,
+          matchStrength: "high",
+          matchedFields: ["brand"],
+          conflictingFields: [],
+          matchReasons: ["Shared title."],
+          matchWarnings: [],
+          extractedTitle: "Rare Book",
+          price: 15,
+          currency: "USD",
+          fetchStatus: "ok",
+          recommendedAction: "strong_candidate_for_import",
+        },
+        {
+          url: "https://blocked.test/item",
+          host: "blocked.test",
+          sourceWatchId: "watch-1",
+          matchedFields: [],
+          conflictingFields: [],
+          matchReasons: [],
+          matchWarnings: [],
+          fetchStatus: "blocked",
+          blockedReason: "deal-hunter: URL host \"blocked.test\" is not in allowedHosts policy",
+          recommendedAction: "blocked_or_failed",
+        },
+      ],
+      importPreview: [
+        {
+          candidate: {
+            url: "https://shop-b.test/product/2",
+            host: "shop-b.test",
+            sourceWatchId: "watch-1",
+            matchScore: 94,
+            matchStrength: "high",
+            matchedFields: ["brand", "mpn"],
+            conflictingFields: [],
+            matchReasons: ["Shared mpn=RB-1."],
+            matchWarnings: [],
+            extractedTitle: "Rare Book Special Edition",
+            price: 12,
+            currency: "USD",
+            fetchStatus: "ok",
+            recommendedAction: "strong_candidate_for_import",
+          },
+          importable: true,
+        },
+        {
+          candidate: {
+            url: "https://shop.test/a",
+            host: "shop.test",
+            sourceWatchId: "watch-1",
+            matchScore: 91,
+            matchStrength: "high",
+            matchedFields: ["brand"],
+            conflictingFields: [],
+            matchReasons: ["Shared title."],
+            matchWarnings: [],
+            extractedTitle: "Rare Book",
+            price: 15,
+            currency: "USD",
+            fetchStatus: "ok",
+            recommendedAction: "strong_candidate_for_import",
+          },
+          importable: false,
+          duplicateWatchId: "watch-1",
+        },
+        {
+          candidate: {
+            url: "https://blocked.test/item",
+            host: "blocked.test",
+            sourceWatchId: "watch-1",
+            matchedFields: [],
+            conflictingFields: [],
+            matchReasons: [],
+            matchWarnings: [],
+            fetchStatus: "blocked",
+            blockedReason: "deal-hunter: URL host \"blocked.test\" is not in allowedHosts policy",
+            recommendedAction: "blocked_or_failed",
+          },
+          importable: false,
+        },
+      ],
+      skippedResults: [{ url: "https://skip.test", reason: "host mismatch" }],
+    });
+
+    expect(report.summary).toMatchObject({
+      candidateCount: 3,
+      fetchedOkCount: 2,
+      blockedOrFailedCount: 1,
+      importableCount: 1,
+      strongMatchCount: 2,
+      duplicateCount: 1,
+      skippedResultCount: 1,
+    });
+    expect(report.topCandidates[0]?.url).toBe("https://shop-b.test/product/2");
+    expect(report.blockedOrFailed[0]).toMatchObject({
+      url: "https://blocked.test/item",
+      fetchStatus: "blocked",
+    });
+    expect(report.actionSummary.some((line) => line.includes("ready for import"))).toBe(true);
+  });
+});
+
+describe("buildDiscoveryBacklog", () => {
+  it("ranks enabled watches that most need broader same-product coverage", () => {
+    const backlog = buildDiscoveryBacklog(store, 10);
+
+    expect(backlog.watchCount).toBe(3);
+    expect(backlog.candidateCount).toBeGreaterThan(0);
+    expect(backlog.backlog[0]).toMatchObject({
+      watchId: "watch-1",
+    });
+    expect(backlog.backlog.some((entry) => entry.watchId === "watch-3")).toBe(true);
+    expect(backlog.actionSummary.length).toBeGreaterThan(0);
   });
 });
 

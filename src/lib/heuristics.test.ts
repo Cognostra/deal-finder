@@ -175,4 +175,24 @@ describe("extractRetailerListing fixtures", () => {
       currency: "USD",
     });
   });
+
+  it("extracts from costco fixture", () => {
+    expect(extractRetailerListing(loadFixture("costco-product.html"))).toEqual({
+      extractorId: "retailer_costco",
+      title: "Ninja Air Fryer Max XL",
+      brand: "Ninja",
+      price: 89.99,
+      currency: "USD",
+    });
+  });
+
+  it("extracts from lowes fixture", () => {
+    expect(extractRetailerListing(loadFixture("lowes-product.html"))).toEqual({
+      extractorId: "retailer_lowes",
+      title: "Kobalt 24-Volt Max Drill Kit",
+      brand: "Kobalt",
+      price: 149,
+      currency: "USD",
+    });
+  });
 });

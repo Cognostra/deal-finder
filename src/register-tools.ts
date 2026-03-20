@@ -2,14 +2,19 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult, withFileLock } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "./config.js";
+import { buildDiscoveryImportPreview, describeDiscoveryPolicy, fetchDiscoveryCandidates, searchDiscoveryCandidates } from "./lib/discovery.js";
 import { mergeCommittedScanResults, runScan } from "./lib/engine.js";
 import { cappedFetch } from "./lib/fetch.js";
 import { canonicalizeTitle, debugExtractListing, evaluateListingText } from "./lib/heuristics.js";
 import { runLlmReviewCandidate } from "./lib/llm-review.js";
+import { buildExternalProductMatchCandidate } from "./lib/product-identity.js";
+import { describeReviewPolicy } from "./lib/review-policy.js";
 import {
   buildAlertsSummary,
   buildBestPriceBoard,
+  buildDiscoveryBacklog,
   buildDoctorSummary,
+  buildDiscoveryReport,
   buildHealthSummary,
   buildHostReportSummary,
   buildHistorySummary,
@@ -52,7 +57,10 @@ function buildScanSummary(results: Awaited<ReturnType<typeof runScan>>) {
     highPriority: 0,
     lowConfidence: 0,
     unchanged: 0,
+    reviewQueued: 0,
+    reviewApplied: 0,
   };
+  const reviewWarnings = new Set<string>();
 
   for (const result of results) {
     if (result.ok) summary.ok += 1;
@@ -64,6 +72,9 @@ function buildScanSummary(results: Awaited<ReturnType<typeof runScan>>) {
       summary.lowConfidence += 1;
     }
     if (!result.changed && result.ok) summary.unchanged += 1;
+    if (result.reviewQueued) summary.reviewQueued += 1;
+    if (result.reviewApplied) summary.reviewApplied += 1;
+    for (const warning of result.reviewWarnings) reviewWarnings.add(warning);
   }
 
   const rankedAlerts = results
@@ -87,7 +98,7 @@ function buildScanSummary(results: Awaited<ReturnType<typeof runScan>>) {
       extractionConfidence: result.extractionConfidence,
     }));
 
-  return { summary, rankedAlerts };
+  return { summary, rankedAlerts, reviewWarnings: [...reviewWarnings] };
 }
 
 function toWatchView(watch: Awaited<ReturnType<typeof loadStore>>["watches"][number]) {
@@ -123,11 +134,26 @@ const IMPORTED_WATCH_SCHEMA = Type.Object({
   enabled: Type.Optional(Type.Boolean()),
   createdAt: Type.Optional(Type.String()),
   importSource: Type.Optional(
-    Type.Object({
-      type: Type.Literal("url"),
-      url: Type.String(),
-      importedAt: Type.String(),
-    }),
+    Type.Union([
+      Type.Object({
+        type: Type.Literal("url"),
+        url: Type.String(),
+        importedAt: Type.String(),
+      }),
+      Type.Object({
+        type: Type.Literal("discovery"),
+        importedAt: Type.String(),
+        discoveryProvider: Type.Union([Type.Literal("manual"), Type.Literal("firecrawl-search")]),
+        sourceWatchId: Type.String(),
+        sourceWatchUrl: Type.String(),
+        sourceWatchLabel: Type.Optional(Type.String()),
+        candidateUrl: Type.String(),
+        searchQuery: Type.Optional(Type.String()),
+        searchRank: Type.Optional(Type.Integer({ minimum: 1 })),
+        searchTitle: Type.Optional(Type.String()),
+        searchDescription: Type.Optional(Type.String()),
+      }),
+    ]),
   ),
   lastSnapshot: Type.Optional(
     Type.Object({
@@ -146,6 +172,33 @@ const IMPORTED_WATCH_SCHEMA = Type.Object({
       contentHash: Type.Optional(Type.String()),
       fetchedAt: Type.String(),
       rawSnippet: Type.Optional(Type.String()),
+      reviewedFields: Type.Optional(
+        Type.Array(
+          Type.Object({
+            field: Type.Union([
+              Type.Literal("title"),
+              Type.Literal("canonicalTitle"),
+              Type.Literal("brand"),
+              Type.Literal("modelId"),
+              Type.Literal("sku"),
+              Type.Literal("mpn"),
+              Type.Literal("gtin"),
+              Type.Literal("asin"),
+              Type.Literal("price"),
+              Type.Literal("currency"),
+              Type.Literal("rawSnippet"),
+            ]),
+            originalValue: Type.Union([Type.String(), Type.Number(), Type.Null()]),
+            reviewedValue: Type.Union([Type.String(), Type.Number(), Type.Null()]),
+            reviewSource: Type.String(),
+            reviewedAt: Type.String(),
+            candidateType: Type.Optional(Type.Union([Type.Literal("extraction_review"), Type.Literal("identity_resolution")])),
+            provider: Type.Optional(Type.String()),
+            model: Type.Optional(Type.String()),
+            reasons: Type.Optional(Type.Array(Type.String())),
+          }),
+        ),
+      ),
     }),
   ),
   history: Type.Optional(
@@ -244,6 +297,27 @@ function buildScopedStore(
   };
 }
 
+function ensureDiscoveryEnabled(cfg: ReturnType<typeof resolveDealConfig>) {
+  if (!cfg.discovery.enabled || cfg.discovery.provider === "off") {
+    throw new Error("deal-hunter: discovery is disabled; set discovery.enabled=true and choose a discovery provider to use discovery workflows");
+  }
+}
+
+function ensureProviderDiscoveryEnabled(cfg: ReturnType<typeof resolveDealConfig>) {
+  ensureDiscoveryEnabled(cfg);
+  if (cfg.discovery.provider !== "firecrawl-search") {
+    throw new Error('deal-hunter: discovery search requires discovery.provider="firecrawl-search"');
+  }
+}
+
+function getActiveDiscoveryProvider(cfg: ReturnType<typeof resolveDealConfig>): "manual" | "firecrawl-search" {
+  ensureDiscoveryEnabled(cfg);
+  if (cfg.discovery.provider === "off") {
+    throw new Error("deal-hunter: discovery provider is off");
+  }
+  return cfg.discovery.provider;
+}
+
 function resolveSavedViewSelection(store: Awaited<ReturnType<typeof loadStore>>, savedViewId: string) {
   const savedView = getSavedView(store, savedViewId);
   if (!savedView) {
@@ -258,6 +332,75 @@ function resolveSavedViewSelection(store: Awaited<ReturnType<typeof loadStore>>,
   };
 }
 
+function watchNotFoundResult() {
+  return jsonResult({ ok: false, error: "watch not found" });
+}
+
+function toDiscoveryAnchor(watch: Awaited<ReturnType<typeof loadStore>>["watches"][number]) {
+  return {
+    watchId: watch.id,
+    label: watch.label,
+    url: watch.url,
+    snapshot: watch.lastSnapshot,
+  };
+}
+
+async function buildDiscoveryWorkflow(args: {
+  watch: Awaited<ReturnType<typeof loadStore>>["watches"][number];
+  store: Awaited<ReturnType<typeof loadStore>>;
+  cfg: ReturnType<typeof resolveDealConfig>;
+  signal?: AbortSignal;
+  candidateUrls?: string[];
+  allowedHosts?: string[];
+  maxSearchResults?: number;
+  queryHints?: string[];
+  includeLooseTitleFallback?: boolean;
+  group?: string;
+  addTags?: string[];
+  enabled?: boolean;
+}) {
+  const { watch, store, cfg, signal } = args;
+  const search = (!args.candidateUrls || args.candidateUrls.length === 0) && cfg.discovery.provider === "firecrawl-search"
+    ? await searchDiscoveryCandidates({
+        watch,
+        cfg,
+        allowedHosts: args.allowedHosts,
+        maxSearchResults: args.maxSearchResults,
+        queryHints: args.queryHints,
+        signal,
+      })
+    : null;
+  const candidates = await fetchDiscoveryCandidates({
+    watch,
+    candidateUrls: args.candidateUrls,
+    searchSeeds: search?.results,
+    cfg,
+    signal,
+    includeLooseTitleFallback: args.includeLooseTitleFallback,
+  });
+  const importPreview = buildDiscoveryImportPreview({
+    watch,
+    candidates,
+    existingWatches: store.watches,
+    discoveryProvider: getActiveDiscoveryProvider(cfg),
+    group: args.group,
+    addTags: args.addTags,
+    enabled: args.enabled,
+  });
+  return { search, candidates, importPreview };
+}
+
+function buildDiscoveryFetchSummary(candidates: Awaited<ReturnType<typeof fetchDiscoveryCandidates>>) {
+  return {
+    candidateCount: candidates.length,
+    okCount: candidates.filter((candidate) => candidate.fetchStatus === "ok").length,
+    blockedOrFailedCount: candidates.filter((candidate) => candidate.fetchStatus !== "ok").length,
+    strongMatchCount: candidates.filter((candidate) => candidate.matchStrength === "high").length,
+    reviewCount: candidates.filter((candidate) => candidate.recommendedAction === "review_before_import").length,
+    weakOrRejectedCount: candidates.filter((candidate) => candidate.recommendedAction === "likely_not_same_product").length,
+  };
+}
+
 export function registerDealTools(api: OpenClawPluginApi): void {
   const cfgBase = resolveDealConfig(api);
   const storePath = cfgBase.storePath;
@@ -268,6 +411,56 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       return fn(store);
     });
   };
+
+  api.registerTool(
+    {
+      name: "deal_discovery_backlog",
+      label: "Deal Hunter",
+      description: "Rank which enabled watches most need discovery coverage expansion and explain why.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildDiscoveryBacklog(scopedStore, params.limit ?? 10),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_discovery_policy",
+      label: "Deal Hunter",
+      description: "Show the effective discovery mode, budgets, trusted-host posture, and whether provider-backed search is configured.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const cfg = resolveDealConfig(api);
+        return jsonResult(describeDiscoveryPolicy(cfg));
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_review_policy",
+      label: "Deal Hunter",
+      description: "Show the effective scan-time review policy, thresholds, and whether automatic model review is enabled.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const cfg = resolveDealConfig(api);
+        return jsonResult(describeReviewPolicy(cfg));
+      },
+    },
+    { optional: false },
+  );
 
   api.registerTool(
     {
@@ -956,7 +1149,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           });
         }
 
-        const { summary, rankedAlerts } = buildScanSummary(results);
+        const { summary, rankedAlerts, reviewWarnings } = buildScanSummary(results);
         return jsonResult({
           savedView: selection.summary,
           matchedCount: selection.watches.length,
@@ -965,6 +1158,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           results,
           summary,
           rankedAlerts,
+          reviewWarnings,
           engine: "node",
           commit,
           commitSummary,
@@ -1382,12 +1576,13 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           });
         }
 
-        const { summary, rankedAlerts } = buildScanSummary(results);
+        const { summary, rankedAlerts, reviewWarnings } = buildScanSummary(results);
 
         return jsonResult({
           results,
           summary,
           rankedAlerts,
+          reviewWarnings,
           engine: "node",
           watchCount: results.length,
           commit,
@@ -2027,6 +2222,390 @@ export function registerDealTools(api: OpenClawPluginApi): void {
 
   api.registerTool(
     {
+      name: "deal_market_check_candidates",
+      label: "Deal Hunter",
+      description: "Fetch explicit candidate URLs and compare them against one anchor watch without importing anything.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        candidateUrls: Type.Array(Type.String(), { minItems: 1, maxItems: 10 }),
+        includeLooseTitleFallback: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params, signal) => {
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "watch not found" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+
+        const cfg = resolveDealConfig(api);
+        const evaluations = await Promise.all(
+          params.candidateUrls.map(async (candidateUrl: string) => {
+            const url = validateTargetUrl(candidateUrl, cfg).toString();
+            try {
+              const { meta, text } = await cappedFetch(url, cfg, { signal });
+              const { extracted, confidence, debug } = debugExtractListing(text, 4000);
+              const match = buildExternalProductMatchCandidate(
+                watch,
+                { url, extracted },
+                { includeLooseTitleFallback: params.includeLooseTitleFallback },
+              );
+              return {
+                url,
+                ok: true,
+                meta,
+                extracted,
+                extractionConfidence: confidence,
+                matchedExtractor: debug.matchedExtractor,
+                match,
+                recommendedAction:
+                  match?.matchStrength === "high"
+                    ? "strong_candidate_for_manual_review_or_watch_add"
+                    : match?.matchStrength === "medium"
+                      ? "review_before_import"
+                      : "likely_not_same_product",
+              };
+            } catch (error) {
+              return {
+                url,
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              };
+            }
+          }),
+        );
+
+        const matched = evaluations
+          .filter((entry) => entry.ok && Boolean(entry.match))
+          .sort((a, b) => ((b.ok ? (b.match?.matchScore ?? 0) : 0) - (a.ok ? (a.match?.matchScore ?? 0) : 0)));
+
+        return jsonResult({
+          anchor: {
+            watchId: watch.id,
+            label: watch.label,
+            url: watch.url,
+            snapshot: watch.lastSnapshot,
+          },
+          summary: {
+            candidateCount: params.candidateUrls.length,
+            fetchedCount: evaluations.filter((entry) => entry.ok).length,
+            matchCount: matched.length,
+            highConfidenceMatches: matched.filter((entry) => entry.match.matchStrength === "high").length,
+            blockedOrFailed: evaluations.filter((entry) => !entry.ok).length,
+          },
+          candidates: evaluations,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_discovery_report",
+      label: "Deal Hunter",
+      description: "Run the bounded discovery workflow and return a compact report of what looks importable, duplicated, weak, or blocked.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        candidateUrls: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 10 })),
+        allowedHosts: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 10 })),
+        maxSearchResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+        queryHints: Type.Optional(Type.Array(Type.String(), { maxItems: 6 })),
+        includeLooseTitleFallback: Type.Optional(Type.Boolean()),
+        group: Type.Optional(Type.String()),
+        addTags: Type.Optional(Type.Array(Type.String())),
+        enabled: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params, signal) => {
+        const cfg = resolveDealConfig(api);
+        ensureDiscoveryEnabled(cfg);
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return watchNotFoundResult();
+        }
+        const { search, candidates, importPreview } = await buildDiscoveryWorkflow({
+          watch,
+          store,
+          cfg,
+          signal,
+          candidateUrls: params.candidateUrls,
+          allowedHosts: params.allowedHosts,
+          maxSearchResults: params.maxSearchResults,
+          queryHints: params.queryHints,
+          includeLooseTitleFallback: params.includeLooseTitleFallback,
+          group: params.group,
+          addTags: params.addTags,
+          enabled: params.enabled,
+        });
+        return jsonResult(
+          buildDiscoveryReport({
+            watch,
+            provider: cfg.discovery.provider,
+            query: search?.query,
+            searchHosts: search?.searchHosts,
+            skippedHosts: search?.skippedHosts,
+            skippedResults: search?.skippedResults,
+            candidates,
+            importPreview,
+          }),
+        );
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_discovery_search",
+      label: "Deal Hunter",
+      description: "Use the configured bounded discovery provider to search explicit retailer hosts for likely same-product candidates before fetching them.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        allowedHosts: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 10 })),
+        maxSearchResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+        queryHints: Type.Optional(Type.Array(Type.String(), { maxItems: 6 })),
+      }),
+      execute: async (_id, params, signal) => {
+        const cfg = resolveDealConfig(api);
+        ensureProviderDiscoveryEnabled(cfg);
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return watchNotFoundResult();
+        }
+        const search = await searchDiscoveryCandidates({
+          watch,
+          cfg,
+          allowedHosts: params.allowedHosts,
+          maxSearchResults: params.maxSearchResults,
+          queryHints: params.queryHints,
+          signal,
+        });
+        return jsonResult({
+          anchor: toDiscoveryAnchor(watch),
+          provider: search.provider,
+          query: search.query,
+          searchHosts: search.searchHosts,
+          skippedHosts: search.skippedHosts,
+          summary: {
+            searchHostCount: search.searchHosts.length,
+            candidateCount: search.results.length,
+            skippedHostCount: search.skippedHosts.length,
+            skippedResultCount: search.skippedResults.length,
+          },
+          candidateUrls: search.results.map((entry) => entry.url),
+          candidates: search.results,
+          skippedResults: search.skippedResults,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_discovery_fetch",
+      label: "Deal Hunter",
+      description: "Fetch explicit candidate URLs, extract them safely, and score likely same-product matches against one anchor watch.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        candidateUrls: Type.Array(Type.String(), { minItems: 1, maxItems: 10 }),
+        includeLooseTitleFallback: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params, signal) => {
+        const cfg = resolveDealConfig(api);
+        ensureDiscoveryEnabled(cfg);
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return watchNotFoundResult();
+        }
+        const candidates = await fetchDiscoveryCandidates({
+          watch,
+          candidateUrls: params.candidateUrls,
+          cfg,
+          signal,
+          includeLooseTitleFallback: params.includeLooseTitleFallback,
+        });
+        return jsonResult({
+          anchor: toDiscoveryAnchor(watch),
+          provider: cfg.discovery.provider,
+          summary: buildDiscoveryFetchSummary(candidates),
+          candidates,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_discovery_run",
+      label: "Deal Hunter",
+      description: "Run the bounded discovery workflow: optionally search, then fetch, rank, and prepare import decisions.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        candidateUrls: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 10 })),
+        allowedHosts: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 10 })),
+        maxSearchResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+        queryHints: Type.Optional(Type.Array(Type.String(), { maxItems: 6 })),
+        includeLooseTitleFallback: Type.Optional(Type.Boolean()),
+        group: Type.Optional(Type.String()),
+        addTags: Type.Optional(Type.Array(Type.String())),
+        enabled: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params, signal) => {
+        const cfg = resolveDealConfig(api);
+        ensureDiscoveryEnabled(cfg);
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return watchNotFoundResult();
+        }
+        const { search, candidates, importPreview } = await buildDiscoveryWorkflow({
+          watch,
+          store,
+          cfg,
+          signal,
+          candidateUrls: params.candidateUrls,
+          allowedHosts: params.allowedHosts,
+          maxSearchResults: params.maxSearchResults,
+          queryHints: params.queryHints,
+          includeLooseTitleFallback: params.includeLooseTitleFallback,
+          group: params.group,
+          addTags: params.addTags,
+          enabled: params.enabled,
+        });
+        const report = buildDiscoveryReport({
+          watch,
+          provider: cfg.discovery.provider,
+          query: search?.query,
+          searchHosts: search?.searchHosts,
+          skippedHosts: search?.skippedHosts,
+          skippedResults: search?.skippedResults,
+          candidates,
+          importPreview,
+        });
+        return jsonResult({
+          anchor: toDiscoveryAnchor(watch),
+          provider: cfg.discovery.provider,
+          query: search?.query,
+          searchHosts: search?.searchHosts,
+          skippedHosts: search?.skippedHosts,
+          summary: {
+            searchedCount: search?.results.length ?? 0,
+            candidateCount: candidates.length,
+            okCount: candidates.filter((candidate) => candidate.fetchStatus === "ok").length,
+            importableCount: importPreview.filter((entry) => entry.importable).length,
+            blockedOrFailedCount: candidates.filter((candidate) => candidate.fetchStatus !== "ok").length,
+          },
+          report,
+          searchedCandidates: search?.results,
+          skippedResults: search?.skippedResults,
+          candidates,
+          importPreview,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_discovery_import",
+      label: "Deal Hunter",
+      description: "Import selected discovery candidates as watches. Defaults to dry-run preview.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        candidateUrls: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 10 })),
+        allowedHosts: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 10 })),
+        maxSearchResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+        queryHints: Type.Optional(Type.Array(Type.String(), { maxItems: 6 })),
+        includeLooseTitleFallback: Type.Optional(Type.Boolean()),
+        group: Type.Optional(Type.String()),
+        addTags: Type.Optional(Type.Array(Type.String())),
+        enabled: Type.Optional(Type.Boolean()),
+        dryRun: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params, signal) => {
+        const cfg = resolveDealConfig(api);
+        ensureDiscoveryEnabled(cfg);
+        const store = await loadStore(storePath);
+        const watch = getWatch(store, params.watchId);
+        if (!watch) {
+          return watchNotFoundResult();
+        }
+        const { search, candidates, importPreview } = await buildDiscoveryWorkflow({
+          watch,
+          store,
+          cfg,
+          signal,
+          candidateUrls: params.candidateUrls,
+          allowedHosts: params.allowedHosts,
+          maxSearchResults: params.maxSearchResults,
+          queryHints: params.queryHints,
+          includeLooseTitleFallback: params.includeLooseTitleFallback,
+          group: params.group,
+          addTags: params.addTags,
+          enabled: params.enabled,
+        });
+        const dryRun = params.dryRun !== false;
+        const importable = importPreview.filter((entry) => entry.importable && entry.watchInput).map((entry) => entry.watchInput!);
+        const report = buildDiscoveryReport({
+          watch,
+          provider: cfg.discovery.provider,
+          query: search?.query,
+          searchHosts: search?.searchHosts,
+          skippedHosts: search?.skippedHosts,
+          skippedResults: search?.skippedResults,
+          candidates,
+          importPreview,
+        });
+
+        if (dryRun) {
+          return jsonResult({
+            ok: true,
+            dryRun: true,
+            provider: cfg.discovery.provider,
+            query: search?.query,
+            searchHosts: search?.searchHosts,
+            importableCount: importable.length,
+            report,
+            searchedCandidates: search?.results,
+            skippedResults: search?.skippedResults,
+            importPreview,
+          });
+        }
+
+        let importResult: ReturnType<typeof importWatches> | null = null;
+        await withStore(async (lockedStore) => {
+          importResult = importWatches(lockedStore, importable, "append");
+          await saveStore(storePath, lockedStore);
+        });
+
+        return jsonResult({
+          ok: true,
+          dryRun: false,
+          provider: cfg.discovery.provider,
+          query: search?.query,
+          searchHosts: search?.searchHosts,
+          importableCount: importable.length,
+          report,
+          searchedCandidates: search?.results,
+          skippedResults: search?.skippedResults,
+          importPreview,
+          importResult,
+        });
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
       name: "deal_product_groups",
       label: "Deal Hunter",
       description: "Group likely same-product watches across the store or a saved view and summarize internal price spreads.",
@@ -2186,6 +2765,11 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           currency: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           rawSnippet: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
+        reviewSource: Type.Optional(Type.String()),
+        candidateType: Type.Optional(Type.Union([Type.Literal("extraction_review"), Type.Literal("identity_resolution")])),
+        provider: Type.Optional(Type.String()),
+        model: Type.Optional(Type.String()),
+        reasons: Type.Optional(Type.Array(Type.String())),
         dryRun: Type.Optional(Type.Boolean()),
       }),
       execute: async (_id, params) => {
@@ -2216,7 +2800,22 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           price: params.review.price,
           currency: params.review.currency,
           rawSnippet: params.review.rawSnippet,
+          provenance: {
+            reviewSource: params.reviewSource?.trim() || "deal_llm_review_apply",
+            candidateType: params.candidateType,
+            provider: params.provider?.trim() || undefined,
+            model: params.model?.trim() || undefined,
+            reasons: params.reasons?.map((reason: string) => reason.trim()).filter(Boolean),
+          },
         };
+        const changedFieldNames = [
+          ...Object.keys(params.review),
+          ...(("canonicalTitle" in params.review || typeof params.review.title !== "string") ? [] : ["canonicalTitle"]),
+        ].filter((field, index, fields) => fields.indexOf(field) === index)
+          .filter((field) => {
+            const key = field as keyof typeof patch;
+            return before?.[key as keyof NonNullable<typeof before>] !== patch[key];
+          });
 
         if (params.dryRun !== false) {
           const previewStore = structuredClone(store);
@@ -2225,6 +2824,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
             ok: true,
             dryRun: true,
             watchId: params.watchId,
+            reviewSource: patch.provenance.reviewSource,
+            changedFields: changedFieldNames,
             before,
             after: previewWatch.lastSnapshot,
           });
@@ -2240,6 +2841,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
           ok: true,
           dryRun: false,
           watchId: params.watchId,
+          reviewSource: patch.provenance.reviewSource,
+          changedFields: changedFieldNames,
           before,
           after: updated?.lastSnapshot,
         });

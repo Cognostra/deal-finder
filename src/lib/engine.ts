@@ -16,6 +16,7 @@ import { cappedFetch } from "./fetch.js";
 import { extractListing, hashSnippet } from "./heuristics.js";
 import { mapPool } from "./concurrency.js";
 import { PerHostRateLimiter } from "./host-limiter.js";
+import { applyScanReviewPolicy } from "./review-policy.js";
 import { appendWatchHistory, saveStore } from "./store.js";
 import { validateTargetUrl } from "./url-policy.js";
 
@@ -422,6 +423,11 @@ function finalizeResult(args: {
     after,
     extracted,
     alerts,
+    reviewMode: "off",
+    reviewQueued: false,
+    reviewApplied: false,
+    reviewWarnings: [],
+    reviewedFields: [],
   };
 }
 
@@ -652,7 +658,13 @@ export async function runScan(args: {
   const scanResults = await mapPool(safeList, cfg.maxConcurrent, (w) =>
     scanOneWatch(w, cfg, limiter, args.signal),
   );
-  const results = invalidResults.concat(scanResults);
+  const rawResults = invalidResults.concat(scanResults);
+  const results = await applyScanReviewPolicy({
+    api,
+    cfg,
+    list: safeList,
+    results: rawResults,
+  });
 
   if (commit) {
     applyCommit(store, results);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoreFile } from "../types.js";
-import { buildProductGroups, buildProductMatchCandidates, getWatchHost, getWatchIdentityFields } from "./product-identity.js";
+import { buildExternalProductMatchCandidate, buildProductGroups, buildProductMatchCandidates, getWatchHost, getWatchIdentityFields } from "./product-identity.js";
 
 const store: StoreFile = {
   version: 2,
@@ -91,6 +91,32 @@ describe("buildProductGroups", () => {
       highestPrice: 299.99,
       bestWatchId: "b",
     });
+  });
+});
+
+describe("buildExternalProductMatchCandidate", () => {
+  it("scores an extracted external candidate against an anchor watch", () => {
+    const match = buildExternalProductMatchCandidate(store.watches[0]!, {
+      url: "https://shop-d.test/product/sony-headphones",
+      extracted: {
+        title: "Sony WH-1000XM5 Wireless Headphones",
+        canonicalTitle: "sony headphones",
+        brand: "Sony",
+        modelId: "WH-1000XM5",
+        mpn: "WH1000XM5/B",
+        price: 269.99,
+        currency: "USD",
+      },
+    });
+
+    expect(match).toMatchObject({
+      url: "https://shop-d.test/product/sony-headphones",
+      sharedFields: ["brand", "modelId", "mpn"],
+      conflictingFields: [],
+      matchStrength: "high",
+      latestPrice: 269.99,
+    });
+    expect(match?.matchScore).toBeGreaterThanOrEqual(100);
   });
 });
 

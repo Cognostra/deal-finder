@@ -26,6 +26,25 @@ export type ResolvedDealConfig = Required<
   DealHunterPluginConfig & {
     userAgents: string[];
     storePath: string;
+    llmReview: {
+      mode: NonNullable<NonNullable<DealHunterPluginConfig["llmReview"]>["mode"]>;
+      lowConfidenceThreshold: number;
+      maxReviewsPerScan: number;
+      allowPriceRewrite: boolean;
+      allowIdentityRewrite: boolean;
+      provider?: string;
+      model?: string;
+      timeoutMs: number;
+    };
+    discovery: {
+      enabled: boolean;
+      provider: NonNullable<NonNullable<DealHunterPluginConfig["discovery"]>["provider"]>;
+      maxSearchResults: number;
+      maxFetches: number;
+      allowedHosts?: string[];
+      blockedHosts?: string[];
+      timeoutMs: number;
+    };
   };
 
 export function resolveDealConfig(api: OpenClawPluginApi): ResolvedDealConfig {
@@ -46,5 +65,24 @@ export function resolveDealConfig(api: OpenClawPluginApi): ResolvedDealConfig {
     fetcher: raw.fetcher ?? "local",
     firecrawlApiKey: raw.firecrawlApiKey,
     firecrawlBaseUrl: raw.firecrawlBaseUrl ?? "https://api.firecrawl.dev",
+    llmReview: {
+      mode: raw.llmReview?.mode ?? "off",
+      lowConfidenceThreshold: Math.max(0, Math.min(100, raw.llmReview?.lowConfidenceThreshold ?? 45)),
+      maxReviewsPerScan: Math.max(0, raw.llmReview?.maxReviewsPerScan ?? 3),
+      allowPriceRewrite: raw.llmReview?.allowPriceRewrite ?? false,
+      allowIdentityRewrite: raw.llmReview?.allowIdentityRewrite ?? true,
+      provider: raw.llmReview?.provider?.trim() || undefined,
+      model: raw.llmReview?.model?.trim() || undefined,
+      timeoutMs: raw.llmReview?.timeoutMs ?? 30_000,
+    },
+    discovery: {
+      enabled: raw.discovery?.enabled ?? false,
+      provider: raw.discovery?.provider ?? "off",
+      maxSearchResults: Math.max(1, raw.discovery?.maxSearchResults ?? 5),
+      maxFetches: Math.max(1, raw.discovery?.maxFetches ?? 5),
+      allowedHosts: normalizeHostPatterns(raw.discovery?.allowedHosts),
+      blockedHosts: normalizeHostPatterns(raw.discovery?.blockedHosts),
+      timeoutMs: raw.discovery?.timeoutMs ?? 25_000,
+    },
   };
 }

@@ -1,4 +1,14 @@
-import type { ProductIdentityEntry, ProductIdentityField, StoreFile, Watch } from "../types.js";
+import type {
+  ExtractedListing,
+  ProductIdentityEntry,
+  ProductIdentityField,
+  ProductMatchCandidate,
+  ProductMatchStrength,
+  StoreFile,
+  Watch,
+} from "../types.js";
+
+type IdentityLike = Pick<ExtractedListing, "canonicalTitle" | "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin" | "price">;
 
 export function getWatchIdentityFields(watch: Watch): ProductIdentityEntry[] {
   const snapshot = watch.lastSnapshot;
@@ -32,65 +42,178 @@ export function getWatchHost(url: string): string {
   }
 }
 
+function buildIdentityMap(watch: Watch): Map<ProductIdentityField, string> {
+  return new Map(getWatchIdentityFields(watch).map((identifier) => [identifier.field, identifier.value]));
+}
+
+function buildIdentityMapFromLike(value: IdentityLike): Map<ProductIdentityField, string> {
+  return new Map(
+    ([
+      ["brand", value.brand],
+      ["modelId", value.modelId],
+      ["sku", value.sku],
+      ["mpn", value.mpn],
+      ["gtin", value.gtin],
+      ["asin", value.asin],
+    ] as const)
+      .filter((entry): entry is [ProductIdentityField, string] => Boolean(entry[1]))
+      .map(([field, entryValue]) => [field, entryValue]),
+  );
+}
+
+export function getWatchIdentityStrength(watch: Watch): {
+  strength: ProductMatchStrength | "none";
+  score: number;
+  reasons: string[];
+} {
+  const identifiers = getWatchIdentityFields(watch);
+  const reasons: string[] = [];
+  if (!identifiers.length) {
+    return {
+      strength: "none",
+      score: 0,
+      reasons: ["No persistent product identifiers are stored on the latest snapshot."],
+    };
+  }
+
+  const score = identifiers.reduce((total, identifier) => total + Math.max(1, Math.round(getIdentityFieldWeight(identifier.field) / 25)), 0);
+  reasons.push(`Stored identifiers: ${identifiers.map((identifier) => `${identifier.field}=${identifier.value}`).join(", ")}.`);
+
+  return {
+    strength: score >= 6 ? "high" : score >= 3 ? "medium" : "low",
+    score,
+    reasons,
+  };
+}
+
 export function buildProductMatchCandidates(
   anchor: Watch,
   watches: Watch[],
   options?: { includeLooseTitleFallback?: boolean },
-): Array<{
-  watchId: string;
-  label?: string;
-  url: string;
-  latestPrice?: number;
-  sharedFields: ProductIdentityField[];
-  matchScore: number;
-  matchReasons: string[];
-}> {
-  const anchorSnapshot = anchor.lastSnapshot;
-  const anchorIdentity = getWatchIdentityFields(anchor);
-  const anchorIdentityMap = new Map(anchorIdentity.map((identifier) => [`${identifier.field}:${identifier.value}`, identifier.field]));
-  const anchorTitle = anchorSnapshot?.canonicalTitle;
-
+): ProductMatchCandidate[] {
   return watches
     .filter((candidate) => candidate.id !== anchor.id)
-    .map((candidate) => {
-      const candidateIdentity = getWatchIdentityFields(candidate);
-      const sharedIdentity = candidateIdentity
-        .filter((identifier) => anchorIdentityMap.has(`${identifier.field}:${identifier.value}`))
-        .map((identifier) => identifier.field);
+    .map((candidate) =>
+      buildIdentityLikeMatch(anchor, {
+        url: candidate.url,
+        watchId: candidate.id,
+        label: candidate.label,
+        latestPrice: candidate.lastSnapshot?.price,
+        canonicalTitle: candidate.lastSnapshot?.canonicalTitle,
+        brand: candidate.lastSnapshot?.brand,
+        modelId: candidate.lastSnapshot?.modelId,
+        sku: candidate.lastSnapshot?.sku,
+        mpn: candidate.lastSnapshot?.mpn,
+        gtin: candidate.lastSnapshot?.gtin,
+        asin: candidate.lastSnapshot?.asin,
+      }, options),
+    )
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+    .sort((a, b) => b.matchScore - a.matchScore || (a.latestPrice ?? Number.POSITIVE_INFINITY) - (b.latestPrice ?? Number.POSITIVE_INFINITY))
+    .slice(0, 12);
+}
 
-      let matchScore = sharedIdentity.reduce((score, field) => score + getIdentityFieldWeight(field), 0);
-      const matchReasons = sharedIdentity.map((field) => `Shared ${field}.`);
+function buildIdentityLikeMatch(
+  anchor: Watch,
+  candidate: {
+    url: string;
+    watchId?: string;
+    label?: string;
+    latestPrice?: number;
+    canonicalTitle?: string;
+    brand?: string;
+    modelId?: string;
+    sku?: string;
+    mpn?: string;
+    gtin?: string;
+    asin?: string;
+  },
+  options?: { includeLooseTitleFallback?: boolean },
+): ProductMatchCandidate | null {
+  const anchorSnapshot = anchor.lastSnapshot;
+  const anchorIdentity = buildIdentityMap(anchor);
+  const anchorTitle = anchorSnapshot?.canonicalTitle;
+  const candidateIdentity = buildIdentityMapFromLike(candidate);
+      const sharedIdentity: ProductIdentityField[] = [];
+      const conflictingFields: ProductIdentityField[] = [];
+      let matchScore = 0;
+      const matchReasons: string[] = [];
+      const matchWarnings: string[] = [];
+
+      for (const [field, anchorValue] of anchorIdentity.entries()) {
+        const candidateValue = candidateIdentity.get(field);
+        if (!candidateValue) continue;
+        if (candidateValue === anchorValue) {
+          sharedIdentity.push(field);
+          matchScore += getIdentityFieldWeight(field);
+          matchReasons.push(`Shared ${field}=${anchorValue}.`);
+        } else {
+          conflictingFields.push(field);
+          matchWarnings.push(`Conflicting ${field}: anchor=${anchorValue}, candidate=${candidateValue}.`);
+          matchScore -= Math.max(10, Math.round(getIdentityFieldWeight(field) / 2));
+        }
+      }
 
       if (
         options?.includeLooseTitleFallback !== false &&
         anchorTitle &&
-        candidate.lastSnapshot?.canonicalTitle &&
-        candidate.lastSnapshot.canonicalTitle === anchorTitle
+        candidate.canonicalTitle &&
+        candidate.canonicalTitle === anchorTitle
       ) {
         matchScore += 30;
         matchReasons.push("Canonical titles match.");
       }
 
-      if (anchorSnapshot?.brand && candidate.lastSnapshot?.brand && anchorSnapshot.brand === candidate.lastSnapshot.brand) {
+      if (!anchorIdentity.has("brand") && anchorSnapshot?.brand && candidate.brand && anchorSnapshot.brand === candidate.brand) {
         matchScore += 10;
         matchReasons.push("Brands match.");
+      } else if (!anchorIdentity.has("brand") && anchorSnapshot?.brand && candidate.brand && anchorSnapshot.brand !== candidate.brand) {
+        conflictingFields.push("brand");
+        matchWarnings.push(`Conflicting brand: anchor=${anchorSnapshot.brand}, candidate=${candidate.brand}.`);
+        matchScore -= 15;
       }
 
       if (matchScore <= 0) return null;
 
+      const normalizedScore = Math.min(100, Math.max(1, matchScore));
+      const matchStrength: ProductMatchStrength =
+        normalizedScore >= 80 ? "high" : normalizedScore >= 45 ? "medium" : "low";
+
       return {
-        watchId: candidate.id,
+        watchId: candidate.watchId ?? candidate.url,
         label: candidate.label,
         url: candidate.url,
-        latestPrice: candidate.lastSnapshot?.price,
+        latestPrice: candidate.latestPrice,
         sharedFields: [...new Set(sharedIdentity)],
-        matchScore: Math.min(100, matchScore),
+        conflictingFields: [...new Set(conflictingFields)],
+        matchScore: normalizedScore,
+        matchStrength,
         matchReasons,
+        matchWarnings,
       };
-    })
-    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
-    .sort((a, b) => b.matchScore - a.matchScore || (a.latestPrice ?? Number.POSITIVE_INFINITY) - (b.latestPrice ?? Number.POSITIVE_INFINITY))
-    .slice(0, 12);
+}
+
+export function buildExternalProductMatchCandidate(
+  anchor: Watch,
+  candidate: {
+    url: string;
+    label?: string;
+    extracted: ExtractedListing;
+  },
+  options?: { includeLooseTitleFallback?: boolean },
+): ProductMatchCandidate | null {
+  return buildIdentityLikeMatch(anchor, {
+    url: candidate.url,
+    label: candidate.label,
+    latestPrice: candidate.extracted.price,
+    canonicalTitle: candidate.extracted.canonicalTitle,
+    brand: candidate.extracted.brand,
+    modelId: candidate.extracted.modelId,
+    sku: candidate.extracted.sku,
+    mpn: candidate.extracted.mpn,
+    gtin: candidate.extracted.gtin,
+    asin: candidate.extracted.asin,
+  }, options);
 }
 
 export function buildProductGroups(
