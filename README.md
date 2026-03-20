@@ -117,6 +117,8 @@ agents: {
           "deal_trends",
           "deal_top_drops",
           "deal_market_check",
+          "deal_product_groups",
+          "deal_best_price_board",
           "deal_watch_insights",
           "deal_watch_identity",
           "deal_schedule_advice",
@@ -170,6 +172,8 @@ agents: {
 | `deal_trends` | Summarize falling, rising, flat, and volatile watches with compact sparklines. |
 | `deal_top_drops` | Rank the strongest deals by discount from peak or the latest committed drop. |
 | `deal_market_check` | Compare one watch against likely same-product watches already in the current store. |
+| `deal_product_groups` | Cluster likely same-product watches across the store or a saved view and summarize group spreads. |
+| `deal_best_price_board` | Rank grouped same-product opportunities by current internal spread and best-known watch. |
 | `deal_watch_insights` | Explain one watch in depth: trend, volatility, glitch risk, and active signals. |
 | `deal_watch_identity` | Show stored product identifiers for a watch and any other watches sharing those identifiers. |
 | `deal_schedule_advice` | Recommend scan cadence by host or watch from observed history timing. |
@@ -191,13 +195,14 @@ Recommended first-run workflow:
 9. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
 10. `deal_scan` with `commit: true` to capture snapshots, then `deal_view_scan` when you want to scan only one saved slice.
 11. `deal_view_report`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
-12. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
-13. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
-14. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
-15. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
-16. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
-17. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-18. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+12. `deal_product_groups` and `deal_best_price_board` once you have multiple same-product watches across retailers.
+13. `deal_workflow_best_opportunities` when you want the sharpest “what should I care about now?” answer.
+14. `deal_workflow_cleanup` when you want duplicates, stale items, weak extraction cases, and noisy watches surfaced in one pass.
+15. `deal_watch_export` before major cleanup work or when moving watches to another workspace.
+16. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
+17. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
+18. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
+19. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
@@ -255,6 +260,8 @@ The analytics tools add:
 - `deal_trends` for compact per-watch direction and volatility summaries
 - `deal_top_drops` for ranking discounts against historical peaks or the latest committed move
 - `deal_market_check` for comparing likely same-product watches already in your own watch store
+- `deal_product_groups` for clustering likely same-product watches into explainable groups
+- `deal_best_price_board` for ranking current best-known internal prices by grouped market spread
 - `deal_watch_insights` for one-watch explanations with sparkline context
 - `deal_watch_identity` for stored product identifiers and same-product watch matching inside the current store
 - `deal_schedule_advice` for host-level or watch-level scan cadence suggestions

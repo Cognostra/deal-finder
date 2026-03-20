@@ -95,6 +95,177 @@ function buildProductMatchCandidates(
     .slice(0, 12);
 }
 
+function getWatchHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+function buildProductGroups(
+  store: StoreFile,
+  options?: { includeLooseTitleFallback?: boolean; minMatchScore?: number },
+): Array<{
+  groupId: string;
+  title?: string;
+  canonicalTitle?: string;
+  identifiers: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string; count: number }>;
+  matchBasis: string[];
+  watchCount: number;
+  bestPrice?: number;
+  highestPrice?: number;
+  spread?: {
+    absolute: number;
+    percentFromBest: number;
+  };
+  bestWatchId?: string;
+  members: Array<{
+    watchId: string;
+    label?: string;
+    url: string;
+    host: string;
+    latestPrice?: number;
+    currency?: string;
+    enabled: boolean;
+    sharedIdentityCount: number;
+  }>;
+}> {
+  const minMatchScore = options?.minMatchScore ?? 80;
+  const parent = new Map<string, string>();
+  const watchesWithSnapshots = store.watches.filter((watch) => Boolean(watch.lastSnapshot));
+
+  function find(id: string): string {
+    const current = parent.get(id);
+    if (!current || current === id) {
+      parent.set(id, id);
+      return id;
+    }
+    const root = find(current);
+    parent.set(id, root);
+    return root;
+  }
+
+  function union(a: string, b: string) {
+    const rootA = find(a);
+    const rootB = find(b);
+    if (rootA !== rootB) {
+      parent.set(rootB, rootA);
+    }
+  }
+
+  for (const watch of watchesWithSnapshots) {
+    parent.set(watch.id, watch.id);
+  }
+
+  for (const watch of watchesWithSnapshots) {
+    const matches = buildProductMatchCandidates(watch, watchesWithSnapshots, options);
+    for (const match of matches) {
+      if (match.matchScore >= minMatchScore) {
+        union(watch.id, match.watchId);
+      }
+    }
+  }
+
+  const groups = new Map<string, Watch[]>();
+  for (const watch of watchesWithSnapshots) {
+    const root = find(watch.id);
+    const existing = groups.get(root) ?? [];
+    existing.push(watch);
+    groups.set(root, existing);
+  }
+
+  return [...groups.values()]
+    .filter((group) => group.length > 1)
+    .map((group) => {
+      const orderedByTitle = [...group].sort(
+        (a, b) =>
+          (b.lastSnapshot?.canonicalTitle?.length ?? 0) - (a.lastSnapshot?.canonicalTitle?.length ?? 0) ||
+          (a.label ?? a.url).localeCompare(b.label ?? b.url),
+      );
+      const representative = orderedByTitle[0]!;
+      const title = representative.lastSnapshot?.title ?? representative.label;
+      const canonicalTitle = representative.lastSnapshot?.canonicalTitle;
+
+      const identifierCounts = new Map<string, { field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string; count: number }>();
+      for (const watch of group) {
+        for (const identifier of getWatchIdentityFields(watch)) {
+          const key = `${identifier.field}:${identifier.value}`;
+          const existing = identifierCounts.get(key);
+          if (existing) {
+            existing.count += 1;
+          } else {
+            identifierCounts.set(key, { ...identifier, count: 1 });
+          }
+        }
+      }
+      const identifiers = [...identifierCounts.values()]
+        .sort((a, b) => b.count - a.count || getIdentityFieldWeight(b.field) - getIdentityFieldWeight(a.field))
+        .slice(0, 6);
+
+      const matchBasis = identifiers
+        .filter((identifier) => identifier.count >= 2)
+        .map((identifier) => `${identifier.field}=${identifier.value}`)
+        .slice(0, 4);
+      if (!matchBasis.length && canonicalTitle) {
+        matchBasis.push(`canonicalTitle=${canonicalTitle}`);
+      }
+
+      const members = group
+        .map((watch) => ({
+          watchId: watch.id,
+          label: watch.label,
+          url: watch.url,
+          host: getWatchHost(watch.url),
+          latestPrice: watch.lastSnapshot?.price,
+          currency: watch.lastSnapshot?.currency,
+          enabled: watch.enabled,
+          sharedIdentityCount: getWatchIdentityFields(watch).filter((identifier) =>
+            identifiers.some((groupIdentifier) => groupIdentifier.field === identifier.field && groupIdentifier.value === identifier.value),
+          ).length,
+        }))
+        .sort(
+          (a, b) =>
+            (a.latestPrice ?? Number.POSITIVE_INFINITY) - (b.latestPrice ?? Number.POSITIVE_INFINITY) ||
+            Number(b.enabled) - Number(a.enabled) ||
+            a.url.localeCompare(b.url),
+        );
+
+      const prices = members
+        .map((member) => member.latestPrice)
+        .filter((price): price is number => price != null);
+      const bestPrice = prices.length ? Math.min(...prices) : undefined;
+      const highestPrice = prices.length ? Math.max(...prices) : undefined;
+      const spread =
+        bestPrice != null && highestPrice != null && highestPrice > bestPrice
+          ? {
+              absolute: Number((highestPrice - bestPrice).toFixed(2)),
+              percentFromBest: Number((((highestPrice - bestPrice) / bestPrice) * 100).toFixed(1)),
+            }
+          : undefined;
+
+      return {
+        groupId: group.map((watch) => watch.id).sort()[0]!,
+        title,
+        canonicalTitle,
+        identifiers,
+        matchBasis,
+        watchCount: group.length,
+        bestPrice,
+        highestPrice,
+        spread,
+        bestWatchId: members.find((member) => member.latestPrice === bestPrice)?.watchId,
+        members,
+      };
+    })
+    .sort(
+      (a, b) =>
+        (b.spread?.percentFromBest ?? 0) - (a.spread?.percentFromBest ?? 0) ||
+        b.watchCount - a.watchCount ||
+        (a.title ?? a.groupId).localeCompare(b.title ?? b.groupId),
+    );
+}
+
 function getHistoryPrices(watch: Watch): number[] {
   return getHistoryEntries(watch)
     .map((entry) => entry.price)
@@ -639,6 +810,8 @@ export function buildSampleSetup() {
       "deal_trends",
       "deal_top_drops",
       "deal_market_check",
+      "deal_product_groups",
+      "deal_best_price_board",
       "deal_watch_insights",
       "deal_watch_identity",
       "deal_schedule_advice",
@@ -660,6 +833,8 @@ export function buildSampleSetup() {
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
       "Use deal_top_drops and deal_trends to show me the strongest current deals with context.",
       "Use deal_market_check for my best-looking deal and show me whether the current watch is actually the best price in my store.",
+      "Use deal_product_groups to cluster likely same-product watches and show me which groups have meaningful internal price spread.",
+      "Use deal_best_price_board to rank where my current best-known internal prices are hiding.",
       "Use deal_watch_insights for my most volatile watch and explain whether it looks real or noisy.",
       "Use deal_watch_identity for my best current deal and tell me whether any other watches appear to be the same product.",
       "Use deal_workflow_triage to tell me what changed, what matters, what is noisy, and what I should review first.",
@@ -687,6 +862,7 @@ export function buildQuickstartGuide() {
       "Use deal_view_scan or deal_view_report when you want to work on one saved slice instead of the whole portfolio.",
       "Run deal_scan with commit true to capture the first snapshot.",
       "Use deal_alerts, deal_trends, deal_market_check, deal_watch_identity, deal_workflow_triage, and deal_report to inspect what changed.",
+      "Use deal_product_groups and deal_best_price_board after you have same-product coverage across multiple retailers.",
       "Use deal_watch_export before large watchlist edits or migration.",
       "Use deal_watch_import_url with dryRun first before applying a shared remote watchlist.",
     ],
@@ -696,6 +872,7 @@ export function buildQuickstartGuide() {
       "Use deal_report and deal_alerts to summarize the most interesting current deals.",
       "Use deal_view_report for my saved GPU alerts view so I get a compact multi-signal report in one call.",
       "Use deal_workflow_triage to tell me what changed and what deserves attention right now.",
+      "Use deal_best_price_board to show me where the best current same-product prices are across my store.",
       "Use deal_top_drops and deal_watch_insights to tell me whether my best-looking deal is actually unusual.",
     ],
     privacyAndSafety: [
@@ -1124,6 +1301,123 @@ export function buildMarketCheckSummary(
     spread,
     matches,
     reasons,
+  };
+}
+
+export function buildProductGroupsSummary(
+  store: StoreFile,
+  options?: { includeLooseTitleFallback?: boolean; limit?: number; minMatchScore?: number },
+): {
+  groupCount: number;
+  groupedWatchCount: number;
+  ungroupedSnapshotCount: number;
+  groups: Array<{
+    groupId: string;
+    title?: string;
+    canonicalTitle?: string;
+    watchCount: number;
+    bestPrice?: number;
+    highestPrice?: number;
+    spread?: {
+      absolute: number;
+      percentFromBest: number;
+    };
+    bestWatchId?: string;
+    matchBasis: string[];
+    identifiers: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string; count: number }>;
+    members: Array<{
+      watchId: string;
+      label?: string;
+      url: string;
+      host: string;
+      latestPrice?: number;
+      currency?: string;
+      enabled: boolean;
+      sharedIdentityCount: number;
+    }>;
+  }>;
+} {
+  const groups = buildProductGroups(store, options).slice(0, options?.limit ?? 20);
+  const groupedWatchIds = new Set(groups.flatMap((group) => group.members.map((member) => member.watchId)));
+  const snapshotCount = store.watches.filter((watch) => Boolean(watch.lastSnapshot)).length;
+  return {
+    groupCount: groups.length,
+    groupedWatchCount: groupedWatchIds.size,
+    ungroupedSnapshotCount: Math.max(0, snapshotCount - groupedWatchIds.size),
+    groups,
+  };
+}
+
+export function buildBestPriceBoard(
+  store: StoreFile,
+  options?: { includeLooseTitleFallback?: boolean; limit?: number; minMatchScore?: number },
+): {
+  groupCount: number;
+  opportunities: Array<{
+    groupId: string;
+    title?: string;
+    watchCount: number;
+    bestWatchId?: string;
+    bestWatchLabel?: string;
+    bestHost?: string;
+    bestPrice?: number;
+    highestPrice?: number;
+    spread?: {
+      absolute: number;
+      percentFromBest: number;
+    };
+    alternateCount: number;
+    alternates: Array<{
+      watchId: string;
+      label?: string;
+      host: string;
+      latestPrice?: number;
+    }>;
+    reasons: string[];
+  }>;
+} {
+  const groups = buildProductGroups(store, options);
+  const opportunities = groups
+    .filter((group) => group.spread && group.bestPrice != null && group.bestWatchId)
+    .map((group) => {
+      const bestWatch = group.members.find((member) => member.watchId === group.bestWatchId);
+      const alternates = group.members.filter((member) => member.watchId !== group.bestWatchId).slice(0, 5);
+      return {
+        groupId: group.groupId,
+        title: group.title,
+        watchCount: group.watchCount,
+        bestWatchId: group.bestWatchId,
+        bestWatchLabel: bestWatch?.label,
+        bestHost: bestWatch?.host,
+        bestPrice: group.bestPrice,
+        highestPrice: group.highestPrice,
+        spread: group.spread,
+        alternateCount: Math.max(0, group.members.length - 1),
+        alternates: alternates.map((alternate) => ({
+          watchId: alternate.watchId,
+          label: alternate.label,
+          host: alternate.host,
+          latestPrice: alternate.latestPrice,
+        })),
+        reasons: [
+          ...(group.matchBasis.length ? [`Grouped by ${group.matchBasis.join(", ")}.`] : []),
+          ...(group.spread
+            ? [`Internal same-product spread is ${group.spread.absolute.toFixed(2)} (${group.spread.percentFromBest.toFixed(1)}%).`]
+            : []),
+        ],
+      };
+    })
+    .sort(
+      (a, b) =>
+        (b.spread?.percentFromBest ?? 0) - (a.spread?.percentFromBest ?? 0) ||
+        b.watchCount - a.watchCount ||
+        (a.title ?? a.groupId).localeCompare(b.title ?? b.groupId),
+    )
+    .slice(0, options?.limit ?? 20);
+
+  return {
+    groupCount: groups.length,
+    opportunities,
   };
 }
 

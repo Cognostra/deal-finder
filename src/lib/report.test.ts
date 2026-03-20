@@ -3,10 +3,12 @@ import type { ResolvedDealConfig } from "../config.js";
 import type { StoreFile } from "../types.js";
 import {
   buildAlertsSummary,
+  buildBestPriceBoard,
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
   buildMarketCheckSummary,
+  buildProductGroupsSummary,
   buildQuickstartGuide,
   buildScheduleAdvice,
   buildSampleSetup,
@@ -411,6 +413,134 @@ describe("buildMarketCheckSummary", () => {
     expect(summary.matches[0]).toMatchObject({
       watchId: "watch-b",
       matchScore: 100,
+    });
+  });
+});
+
+describe("buildProductGroupsSummary", () => {
+  it("clusters likely same-product watches into explainable groups", () => {
+    const marketStore: StoreFile = {
+      version: 2,
+      savedViews: [],
+      watches: [
+        {
+          id: "watch-a",
+          url: "http://shop.test/a",
+          label: "Headphones A",
+          enabled: true,
+          createdAt: "2026-03-20T00:00:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5 Wireless Headphones",
+            canonicalTitle: "sony wh-1000xm5 wireless headphones",
+            brand: "Sony",
+            modelId: "WH-1000XM5",
+            mpn: "WH1000XM5/B",
+            price: 299.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:00:00.000Z",
+          },
+        },
+        {
+          id: "watch-b",
+          url: "http://alt-shop.test/b",
+          label: "Headphones B",
+          enabled: true,
+          createdAt: "2026-03-20T00:05:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5",
+            canonicalTitle: "sony wh-1000xm5",
+            brand: "Sony",
+            modelId: "WH-1000XM5",
+            price: 279.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:05:00.000Z",
+          },
+        },
+        {
+          id: "watch-c",
+          url: "http://other.test/c",
+          label: "Desk Lamp",
+          enabled: true,
+          createdAt: "2026-03-20T00:10:00.000Z",
+          lastSnapshot: {
+            title: "Desk Lamp",
+            canonicalTitle: "desk lamp",
+            brand: "Acme",
+            price: 19.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:10:00.000Z",
+          },
+        },
+      ],
+    };
+
+    const groups = buildProductGroupsSummary(marketStore);
+    expect(groups.groupCount).toBe(1);
+    expect(groups.groupedWatchCount).toBe(2);
+    expect(groups.groups[0]).toMatchObject({
+      watchCount: 2,
+      bestPrice: 279.99,
+      highestPrice: 299.99,
+      bestWatchId: "watch-b",
+    });
+    expect(groups.groups[0]?.matchBasis.some((value) => value.includes("modelId=WH-1000XM5"))).toBe(true);
+  });
+});
+
+describe("buildBestPriceBoard", () => {
+  it("ranks grouped same-product opportunities by internal spread", () => {
+    const marketStore: StoreFile = {
+      version: 2,
+      savedViews: [],
+      watches: [
+        {
+          id: "watch-a",
+          url: "http://shop.test/a",
+          label: "Headphones A",
+          enabled: true,
+          createdAt: "2026-03-20T00:00:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5 Wireless Headphones",
+            canonicalTitle: "sony wh-1000xm5 wireless headphones",
+            brand: "Sony",
+            modelId: "WH-1000XM5",
+            mpn: "WH1000XM5/B",
+            price: 299.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:00:00.000Z",
+          },
+        },
+        {
+          id: "watch-b",
+          url: "http://alt-shop.test/b",
+          label: "Headphones B",
+          enabled: true,
+          createdAt: "2026-03-20T00:05:00.000Z",
+          lastSnapshot: {
+            title: "Sony WH-1000XM5",
+            canonicalTitle: "sony wh-1000xm5",
+            brand: "Sony",
+            modelId: "WH-1000XM5",
+            price: 279.99,
+            currency: "USD",
+            fetchedAt: "2026-03-20T00:05:00.000Z",
+          },
+        },
+      ],
+    };
+
+    const board = buildBestPriceBoard(marketStore);
+    expect(board.groupCount).toBe(1);
+    expect(board.opportunities[0]).toMatchObject({
+      bestWatchId: "watch-b",
+      bestHost: "alt-shop.test",
+      bestPrice: 279.99,
+      highestPrice: 299.99,
+      alternateCount: 1,
+    });
+    expect(board.opportunities[0]?.spread).toEqual({
+      absolute: 20,
+      percentFromBest: 7.1,
     });
   });
 });

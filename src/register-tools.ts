@@ -7,10 +7,12 @@ import { cappedFetch } from "./lib/fetch.js";
 import { debugExtractListing, evaluateListingText } from "./lib/heuristics.js";
 import {
   buildAlertsSummary,
+  buildBestPriceBoard,
   buildDoctorSummary,
   buildHealthSummary,
   buildHistorySummary,
   buildMarketCheckSummary,
+  buildProductGroupsSummary,
   buildQuickstartGuide,
   buildScheduleAdvice,
   buildSampleSetup,
@@ -1433,6 +1435,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_trends",
               "deal_top_drops",
               "deal_market_check",
+              "deal_product_groups",
+              "deal_best_price_board",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1463,6 +1467,8 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_trends",
               "deal_top_drops",
               "deal_market_check",
+              "deal_product_groups",
+              "deal_best_price_board",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1488,7 +1494,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_scan",
             ],
             examplePrompt:
-              "Use deal_view_report for my GPU alerts view, then use deal_workflow_best_opportunities to explain which watch looks like the strongest real deal right now.",
+              "Use deal_view_report for my GPU alerts view, then use deal_best_price_board and deal_workflow_best_opportunities to explain which watch looks like the strongest real deal right now.",
           },
           cron: {
             example:
@@ -1861,6 +1867,62 @@ export function registerDealTools(api: OpenClawPluginApi): void {
             includeLooseTitleFallback: params.includeLooseTitleFallback,
           }),
         );
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_product_groups",
+      label: "Deal Hunter",
+      description: "Group likely same-product watches across the store or a saved view and summarize internal price spreads.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        includeLooseTitleFallback: Type.Optional(Type.Boolean()),
+        minMatchScore: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildProductGroupsSummary(scopedStore, {
+            includeLooseTitleFallback: params.includeLooseTitleFallback,
+            minMatchScore: params.minMatchScore,
+            limit: params.limit ?? 20,
+          }),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_best_price_board",
+      label: "Deal Hunter",
+      description: "Rank product groups by current internal same-product price spread and identify the best-known watch in each group.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        includeLooseTitleFallback: Type.Optional(Type.Boolean()),
+        minMatchScore: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildBestPriceBoard(scopedStore, {
+            includeLooseTitleFallback: params.includeLooseTitleFallback,
+            minMatchScore: params.minMatchScore,
+            limit: params.limit ?? 20,
+          }),
+        });
       },
     },
     { optional: false },
