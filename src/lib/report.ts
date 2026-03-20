@@ -1,269 +1,11 @@
 import type { ResolvedDealConfig } from "../config.js";
-import type { AlertSeverity, StoreFile, Watch, WatchHistoryEntry } from "../types.js";
+import type { AlertSeverity, LlmReviewCandidate, ProductIdentityEntry, StoreFile, Watch, WatchHistoryEntry } from "../types.js";
+import { buildProductGroups, buildProductMatchCandidates, getWatchHost, getWatchIdentityFields } from "./product-identity.js";
 import { canonicalizeWatchUrl } from "./url-policy.js";
 import { buildWatchSignals } from "./watch-view.js";
 
 function getHistoryEntries(watch: Watch): WatchHistoryEntry[] {
   return watch.history ?? [];
-}
-
-function getWatchIdentityFields(watch: Watch): Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string }> {
-  const snapshot = watch.lastSnapshot;
-  if (!snapshot) return [];
-  return ([
-    ["brand", snapshot.brand],
-    ["modelId", snapshot.modelId],
-    ["sku", snapshot.sku],
-    ["mpn", snapshot.mpn],
-    ["gtin", snapshot.gtin],
-    ["asin", snapshot.asin],
-  ] as const)
-    .filter((entry): entry is [typeof entry[0], string] => Boolean(entry[1]))
-    .map(([field, value]) => ({ field, value }));
-}
-
-function getIdentityFieldWeight(field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"): number {
-  if (field === "gtin") return 100;
-  if (field === "asin") return 95;
-  if (field === "mpn") return 85;
-  if (field === "sku") return 75;
-  if (field === "modelId") return 70;
-  return 20;
-}
-
-function buildProductMatchCandidates(
-  anchor: Watch,
-  watches: Watch[],
-  options?: { includeLooseTitleFallback?: boolean },
-): Array<{
-  watchId: string;
-  label?: string;
-  url: string;
-  latestPrice?: number;
-  sharedFields: string[];
-  matchScore: number;
-  matchReasons: string[];
-}> {
-  const anchorSnapshot = anchor.lastSnapshot;
-  const anchorIdentity = getWatchIdentityFields(anchor);
-  const anchorIdentityMap = new Map(anchorIdentity.map((identifier) => [`${identifier.field}:${identifier.value}`, identifier.field]));
-  const anchorTitle = anchorSnapshot?.canonicalTitle;
-
-  return watches
-    .filter((candidate) => candidate.id !== anchor.id)
-    .map((candidate) => {
-      const candidateIdentity = getWatchIdentityFields(candidate);
-      const sharedIdentity = candidateIdentity
-        .filter((identifier) => anchorIdentityMap.has(`${identifier.field}:${identifier.value}`))
-        .map((identifier) => identifier.field);
-
-      let matchScore = sharedIdentity.reduce(
-        (score, field) => score + getIdentityFieldWeight(field as "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"),
-        0,
-      );
-      const matchReasons = sharedIdentity.map((field) => `Shared ${field}.`);
-
-      if (
-        options?.includeLooseTitleFallback !== false &&
-        anchorTitle &&
-        candidate.lastSnapshot?.canonicalTitle &&
-        candidate.lastSnapshot.canonicalTitle === anchorTitle
-      ) {
-        matchScore += 30;
-        matchReasons.push("Canonical titles match.");
-      }
-
-      if (anchorSnapshot?.brand && candidate.lastSnapshot?.brand && anchorSnapshot.brand === candidate.lastSnapshot.brand) {
-        matchScore += 10;
-        matchReasons.push("Brands match.");
-      }
-
-      if (matchScore <= 0) return null;
-
-      return {
-        watchId: candidate.id,
-        label: candidate.label,
-        url: candidate.url,
-        latestPrice: candidate.lastSnapshot?.price,
-        sharedFields: [...new Set(sharedIdentity)],
-        matchScore: Math.min(100, matchScore),
-        matchReasons,
-      };
-    })
-    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
-    .sort((a, b) => b.matchScore - a.matchScore || (a.latestPrice ?? Number.POSITIVE_INFINITY) - (b.latestPrice ?? Number.POSITIVE_INFINITY))
-    .slice(0, 12);
-}
-
-function getWatchHost(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
-}
-
-function buildProductGroups(
-  store: StoreFile,
-  options?: { includeLooseTitleFallback?: boolean; minMatchScore?: number },
-): Array<{
-  groupId: string;
-  title?: string;
-  canonicalTitle?: string;
-  identifiers: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string; count: number }>;
-  matchBasis: string[];
-  watchCount: number;
-  bestPrice?: number;
-  highestPrice?: number;
-  spread?: {
-    absolute: number;
-    percentFromBest: number;
-  };
-  bestWatchId?: string;
-  members: Array<{
-    watchId: string;
-    label?: string;
-    url: string;
-    host: string;
-    latestPrice?: number;
-    currency?: string;
-    enabled: boolean;
-    sharedIdentityCount: number;
-  }>;
-}> {
-  const minMatchScore = options?.minMatchScore ?? 80;
-  const parent = new Map<string, string>();
-  const watchesWithSnapshots = store.watches.filter((watch) => Boolean(watch.lastSnapshot));
-
-  function find(id: string): string {
-    const current = parent.get(id);
-    if (!current || current === id) {
-      parent.set(id, id);
-      return id;
-    }
-    const root = find(current);
-    parent.set(id, root);
-    return root;
-  }
-
-  function union(a: string, b: string) {
-    const rootA = find(a);
-    const rootB = find(b);
-    if (rootA !== rootB) {
-      parent.set(rootB, rootA);
-    }
-  }
-
-  for (const watch of watchesWithSnapshots) {
-    parent.set(watch.id, watch.id);
-  }
-
-  for (const watch of watchesWithSnapshots) {
-    const matches = buildProductMatchCandidates(watch, watchesWithSnapshots, options);
-    for (const match of matches) {
-      if (match.matchScore >= minMatchScore) {
-        union(watch.id, match.watchId);
-      }
-    }
-  }
-
-  const groups = new Map<string, Watch[]>();
-  for (const watch of watchesWithSnapshots) {
-    const root = find(watch.id);
-    const existing = groups.get(root) ?? [];
-    existing.push(watch);
-    groups.set(root, existing);
-  }
-
-  return [...groups.values()]
-    .filter((group) => group.length > 1)
-    .map((group) => {
-      const orderedByTitle = [...group].sort(
-        (a, b) =>
-          (b.lastSnapshot?.canonicalTitle?.length ?? 0) - (a.lastSnapshot?.canonicalTitle?.length ?? 0) ||
-          (a.label ?? a.url).localeCompare(b.label ?? b.url),
-      );
-      const representative = orderedByTitle[0]!;
-      const title = representative.lastSnapshot?.title ?? representative.label;
-      const canonicalTitle = representative.lastSnapshot?.canonicalTitle;
-
-      const identifierCounts = new Map<string, { field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string; count: number }>();
-      for (const watch of group) {
-        for (const identifier of getWatchIdentityFields(watch)) {
-          const key = `${identifier.field}:${identifier.value}`;
-          const existing = identifierCounts.get(key);
-          if (existing) {
-            existing.count += 1;
-          } else {
-            identifierCounts.set(key, { ...identifier, count: 1 });
-          }
-        }
-      }
-      const identifiers = [...identifierCounts.values()]
-        .sort((a, b) => b.count - a.count || getIdentityFieldWeight(b.field) - getIdentityFieldWeight(a.field))
-        .slice(0, 6);
-
-      const matchBasis = identifiers
-        .filter((identifier) => identifier.count >= 2)
-        .map((identifier) => `${identifier.field}=${identifier.value}`)
-        .slice(0, 4);
-      if (!matchBasis.length && canonicalTitle) {
-        matchBasis.push(`canonicalTitle=${canonicalTitle}`);
-      }
-
-      const members = group
-        .map((watch) => ({
-          watchId: watch.id,
-          label: watch.label,
-          url: watch.url,
-          host: getWatchHost(watch.url),
-          latestPrice: watch.lastSnapshot?.price,
-          currency: watch.lastSnapshot?.currency,
-          enabled: watch.enabled,
-          sharedIdentityCount: getWatchIdentityFields(watch).filter((identifier) =>
-            identifiers.some((groupIdentifier) => groupIdentifier.field === identifier.field && groupIdentifier.value === identifier.value),
-          ).length,
-        }))
-        .sort(
-          (a, b) =>
-            (a.latestPrice ?? Number.POSITIVE_INFINITY) - (b.latestPrice ?? Number.POSITIVE_INFINITY) ||
-            Number(b.enabled) - Number(a.enabled) ||
-            a.url.localeCompare(b.url),
-        );
-
-      const prices = members
-        .map((member) => member.latestPrice)
-        .filter((price): price is number => price != null);
-      const bestPrice = prices.length ? Math.min(...prices) : undefined;
-      const highestPrice = prices.length ? Math.max(...prices) : undefined;
-      const spread =
-        bestPrice != null && highestPrice != null && highestPrice > bestPrice
-          ? {
-              absolute: Number((highestPrice - bestPrice).toFixed(2)),
-              percentFromBest: Number((((highestPrice - bestPrice) / bestPrice) * 100).toFixed(1)),
-            }
-          : undefined;
-
-      return {
-        groupId: group.map((watch) => watch.id).sort()[0]!,
-        title,
-        canonicalTitle,
-        identifiers,
-        matchBasis,
-        watchCount: group.length,
-        bestPrice,
-        highestPrice,
-        spread,
-        bestWatchId: members.find((member) => member.latestPrice === bestPrice)?.watchId,
-        members,
-      };
-    })
-    .sort(
-      (a, b) =>
-        (b.spread?.percentFromBest ?? 0) - (a.spread?.percentFromBest ?? 0) ||
-        b.watchCount - a.watchCount ||
-        (a.title ?? a.groupId).localeCompare(b.title ?? b.groupId),
-    );
 }
 
 function getHistoryPrices(watch: Watch): number[] {
@@ -817,6 +559,7 @@ export function buildSampleSetup() {
       "deal_product_groups",
       "deal_best_price_board",
       "deal_llm_review_queue",
+      "deal_llm_review_run",
       "deal_watch_insights",
       "deal_watch_identity",
       "deal_schedule_advice",
@@ -845,6 +588,7 @@ export function buildSampleSetup() {
       "Use deal_product_groups to cluster likely same-product watches and show me which groups have meaningful internal price spread.",
       "Use deal_best_price_board to rank where my current best-known internal prices are hiding.",
       "Use deal_llm_review_queue to prepare any weak extraction or unresolved identity cases for optional manual or llm-task review.",
+      "Use deal_llm_review_run for one queued candidate if I want explicit JSON output from my configured model.",
       "Use deal_watch_insights for my most volatile watch and explain whether it looks real or noisy.",
       "Use deal_watch_identity for my best current deal and tell me whether any other watches appear to be the same product.",
       "Use deal_workflow_triage to tell me what changed, what matters, what is noisy, and what I should review first.",
@@ -876,7 +620,8 @@ export function buildQuickstartGuide() {
       "Run deal_scan with commit true to capture the first snapshot.",
       "Use deal_alerts, deal_trends, deal_market_check, deal_watch_identity, deal_workflow_triage, and deal_report to inspect what changed.",
       "Use deal_product_groups and deal_best_price_board after you have same-product coverage across multiple retailers.",
-      "Use deal_llm_review_queue when you want optional model-assisted review without making Deal Hunter itself depend on llm-task.",
+      "Use deal_llm_review_queue when you want optional model-assisted review without making Deal Hunter itself depend on another plugin tool.",
+      "Use deal_llm_review_run when you want to execute one queued review explicitly through the embedded OpenClaw runtime.",
       "Use deal_watch_export before large watchlist edits or migration.",
       "Use deal_watch_import_url with dryRun first before applying a shared remote watchlist.",
     ],
@@ -892,6 +637,7 @@ export function buildQuickstartGuide() {
       "Use deal_workflow_triage to tell me what changed and what deserves attention right now.",
       "Use deal_best_price_board to show me where the best current same-product prices are across my store.",
       "Use deal_llm_review_queue if any watches still look ambiguous and I want a ready-to-run JSON review payload.",
+      "Use deal_llm_review_run if I want one queued review executed immediately as JSON.",
       "Use deal_top_drops and deal_watch_insights to tell me whether my best-looking deal is actually unusual.",
     ],
     privacyAndSafety: [
@@ -1154,7 +900,7 @@ export function buildWatchInsights(
   activeSignals: string[];
   sparkline: string;
   historyCount: number;
-  identity: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string }>;
+  identity: ProductIdentityEntry[];
 } {
   const history = summarizeHistory(watch);
   const trend = classifyTrend(watch, history);
@@ -1199,7 +945,7 @@ export function buildWatchIdentitySummary(
   watchId: string;
   label?: string;
   url: string;
-  identifiers: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string }>;
+  identifiers: ProductIdentityEntry[];
   strength: "none" | "low" | "medium" | "high";
   reasons: string[];
   relatedWatches: Array<{
@@ -1260,7 +1006,7 @@ export function buildMarketCheckSummary(
   label?: string;
   url: string;
   anchorPrice?: number;
-  identity: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string }>;
+  identity: ProductIdentityEntry[];
   matchCount: number;
   bestKnownPrice?: number;
   highestKnownPrice?: number;
@@ -1343,7 +1089,7 @@ export function buildProductGroupsSummary(
     };
     bestWatchId?: string;
     matchBasis: string[];
-    identifiers: Array<{ field: "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin"; value: string; count: number }>;
+    identifiers: Array<ProductIdentityEntry & { count: number }>;
     members: Array<{
       watchId: string;
       label?: string;
@@ -1458,7 +1204,7 @@ export function buildScheduleAdvice(
   for (const watch of store.watches) {
     const target =
       mode === "host"
-        ? new URL(watch.url).hostname
+        ? getWatchHost(watch.url)
         : watch.id;
     const existing = groups.get(target) ?? [];
     existing.push(watch);
@@ -2326,39 +2072,7 @@ export function buildViewReport(
   };
 }
 
-export function buildLlmReviewQueue(
-  store: StoreFile,
-  limit = 10,
-): {
-  integrationStatus: "deferred_cleanly";
-  reason: string;
-  candidateCount: number;
-  candidates: Array<{
-    watchId: string;
-    label?: string;
-    url: string;
-    type: "extraction_review" | "identity_resolution";
-    priority: "high" | "medium";
-    reasons: string[];
-    currentSnapshot: {
-      title?: string;
-      canonicalTitle?: string;
-      brand?: string;
-      modelId?: string;
-      sku?: string;
-      mpn?: string;
-      gtin?: string;
-      asin?: string;
-      price?: number;
-      currency?: string;
-      rawSnippet?: string;
-    } | null;
-    prompt: string;
-    input: Record<string, unknown>;
-    suggestedSchema: Record<string, unknown>;
-  }>;
-  notes: string[];
-} {
+export function listLlmReviewCandidates(store: StoreFile): LlmReviewCandidate[] {
   const titleCounts = new Map<string, number>();
   for (const watch of store.watches) {
     const canonicalTitle = watch.lastSnapshot?.canonicalTitle?.trim().toLowerCase();
@@ -2507,19 +2221,31 @@ export function buildLlmReviewQueue(
     })
     .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
 
-  const candidates = [...extractionCandidates, ...identityCandidates]
+  return [...extractionCandidates, ...identityCandidates]
     .sort((a, b) => Number(b.priority === "high") - Number(a.priority === "high") || a.url.localeCompare(b.url))
-    .slice(0, limit);
+}
+
+export function buildLlmReviewQueue(
+  store: StoreFile,
+  limit = 10,
+): {
+  integrationStatus: "deferred_cleanly";
+  reason: string;
+  candidateCount: number;
+  candidates: LlmReviewCandidate[];
+  notes: string[];
+} {
+  const candidates = listLlmReviewCandidates(store).slice(0, limit);
 
   return {
     integrationStatus: "deferred_cleanly",
     reason:
-      "Automatic LLM fallback is intentionally not wired because the clean built-in path depends on bundled OpenClaw llm-task internals rather than a stable community-plugin API.",
+      "Automatic LLM fallback remains intentionally disabled; use deal_llm_review_run when you want explicit opt-in JSON review for one queued candidate.",
     candidateCount: candidates.length,
     candidates,
     notes: [
-      "This queue is safe for manual review or for a separate workflow that explicitly enables the bundled llm-task plugin.",
-      "The suggested prompt/input/schema fields are designed to be copied into a JSON-only LLM task without giving this plugin a hard runtime dependency on llm-task.",
+      "This queue is safe for manual review, deal_llm_review_run, or a separate workflow that explicitly enables the bundled llm-task plugin.",
+      "The suggested prompt/input/schema fields are designed to stay portable across manual review, embedded execution, or JSON-only llm-task workflows.",
     ],
   };
 }

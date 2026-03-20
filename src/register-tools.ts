@@ -5,6 +5,7 @@ import { resolveDealConfig } from "./config.js";
 import { mergeCommittedScanResults, runScan } from "./lib/engine.js";
 import { cappedFetch } from "./lib/fetch.js";
 import { debugExtractListing, evaluateListingText } from "./lib/heuristics.js";
+import { runLlmReviewCandidate } from "./lib/llm-review.js";
 import {
   buildAlertsSummary,
   buildBestPriceBoard,
@@ -13,6 +14,7 @@ import {
   buildHostReportSummary,
   buildHistorySummary,
   buildLlmReviewQueue,
+  listLlmReviewCandidates,
   buildMarketCheckSummary,
   buildProductGroupsSummary,
   buildQuickstartGuide,
@@ -1534,6 +1536,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_product_groups",
               "deal_best_price_board",
               "deal_llm_review_queue",
+              "deal_llm_review_run",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1570,6 +1573,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_product_groups",
               "deal_best_price_board",
               "deal_llm_review_queue",
+              "deal_llm_review_run",
               "deal_watch_insights",
               "deal_watch_identity",
               "deal_schedule_advice",
@@ -1594,6 +1598,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_import",
               "deal_watch_import_url",
               "deal_scan",
+              "deal_llm_review_run",
             ],
             examplePrompt:
               "Use deal_template_list to choose the right starter template, then use deal_watch_add_template in dry-run mode before saving a new watch.",
@@ -2094,6 +2099,69 @@ export function registerDealTools(api: OpenClawPluginApi): void {
       },
     },
     { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_llm_review_run",
+      label: "Deal Hunter",
+      description: "Run one queued extraction or identity review through the embedded OpenClaw agent runtime and return JSON output.",
+      parameters: Type.Object({
+        watchId: Type.String(),
+        reviewType: Type.Optional(Type.Union([Type.Literal("extraction_review"), Type.Literal("identity_resolution")])),
+        savedViewId: Type.Optional(Type.String()),
+        provider: Type.Optional(Type.String()),
+        model: Type.Optional(Type.String()),
+        authProfileId: Type.Optional(Type.String()),
+        temperature: Type.Optional(Type.Number()),
+        maxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
+        timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 300000 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        const candidate = listLlmReviewCandidates(scopedStore).find((entry) =>
+          entry.watchId === params.watchId && (!params.reviewType || entry.type === params.reviewType));
+
+        if (!candidate) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: false, error: "review candidate not found" }, null, 2) }],
+            details: { ok: false },
+          };
+        }
+
+        const result = await runLlmReviewCandidate(api, candidate, {
+          provider: params.provider,
+          model: params.model,
+          authProfileId: params.authProfileId,
+          temperature: params.temperature,
+          maxTokens: params.maxTokens,
+          timeoutMs: params.timeoutMs,
+        });
+
+        return jsonResult({
+          ok: true,
+          savedView: selection?.summary,
+          candidate: {
+            watchId: candidate.watchId,
+            label: candidate.label,
+            url: candidate.url,
+            type: candidate.type,
+            priority: candidate.priority,
+            reasons: candidate.reasons,
+          },
+          execution: {
+            provider: result.provider,
+            model: result.model,
+            schemaValidation: "not_enforced",
+          },
+          output: result.json,
+          rawText: result.rawText,
+        });
+      },
+    },
+    { optional: true },
   );
 
   api.registerTool(

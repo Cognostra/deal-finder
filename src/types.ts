@@ -32,6 +32,13 @@ export type WatchSnapshot = {
   rawSnippet?: string;
 };
 
+export type ProductIdentityField = "brand" | "modelId" | "sku" | "mpn" | "gtin" | "asin";
+
+export type ProductIdentityEntry = {
+  field: ProductIdentityField;
+  value: string;
+};
+
 export type WatchHistoryEntry = {
   fetchedAt: string;
   price?: number;
@@ -117,6 +124,33 @@ export type ExtractedListing = {
   price?: number;
   currency?: string;
   snippet?: string;
+};
+
+export type LlmReviewCandidateType = "extraction_review" | "identity_resolution";
+
+export type LlmReviewCandidate = {
+  watchId: string;
+  label?: string;
+  url: string;
+  type: LlmReviewCandidateType;
+  priority: "high" | "medium";
+  reasons: string[];
+  currentSnapshot: {
+    title?: string;
+    canonicalTitle?: string;
+    brand?: string;
+    modelId?: string;
+    sku?: string;
+    mpn?: string;
+    gtin?: string;
+    asin?: string;
+    price?: number;
+    currency?: string;
+    rawSnippet?: string;
+  } | null;
+  prompt: string;
+  input: Record<string, unknown>;
+  suggestedSchema: Record<string, unknown>;
 };
 
 export type ExtractionDebugInfo = {
