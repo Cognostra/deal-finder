@@ -1,0 +1,74 @@
+{
+  "name": "openclaw-deal-hunter",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin: price watches, safe scans, and heuristic deal signals",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts.map",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts",
+    "!dist/**/*.test.js.map",
+    "!dist/**/*.test.d.ts.map",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "pack:check": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm pack --dry-run",
+    "test": "env PATH=\"/usr/bin:/bin:$PATH\" ./node_modules/.bin/vitest run --configLoader runner",
+    "test:diagnose": "./scripts/test-diagnose.sh",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "install": {
+      "npmSpec": "openclaw-deal-hunter",
+      "localPath": ".",
+      "defaultChoice": "npm"
+    },
+    "release": {
+      "publishToNpm": true
+    }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.0",
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "dependencies": {
+    "undici": "^7.24.0"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.48",
+    "@types/node": "^22.10.0",
+    "openclaw": "2026.3.13",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Cognostra/deal-finder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Cognostra/deal-finder/issues"
+  },
+  "homepage": "https://github.com/Cognostra/deal-finder#readme",
+  "license": "MIT",
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "deals",
+    "shopping",
+    "price-tracking"
+  ]
+}
