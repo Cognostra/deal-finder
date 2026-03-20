@@ -6,6 +6,7 @@ import {
   buildBestPriceBoard,
   buildDoctorSummary,
   buildHealthSummary,
+  buildHostReportSummary,
   buildHistorySummary,
   buildLlmReviewQueue,
   buildMarketCheckSummary,
@@ -199,6 +200,7 @@ describe("buildSampleSetup", () => {
     expect(sample.installCommand).toContain("openclaw plugins install");
     expect(sample.allowlist).toContain("deal_watch_add");
     expect(sample.allowlist).toContain("deal_watch_taxonomy");
+    expect(sample.allowlist).toContain("deal_host_report");
     expect(sample.allowlist).toContain("deal_history");
     expect(sample.allowlist).toContain("deal_watch_import");
     expect(sample.allowlist).toContain("deal_watch_import_url");
@@ -214,6 +216,7 @@ describe("buildQuickstartGuide", () => {
     expect(guide.installCommand).toContain("openclaw plugins install");
     expect(guide.firstRunChecklist.length).toBeGreaterThan(3);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_watch_taxonomy"))).toBe(true);
+    expect(guide.firstRunChecklist.some((item) => item.includes("deal_host_report"))).toBe(true);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_watch_import_url"))).toBe(true);
     expect(guide.firstRunChecklist.some((item) => item.includes("deal_saved_view_create"))).toBe(true);
     expect(guide.privacyAndSafety.some((item) => item.includes("allowedHosts"))).toBe(true);
@@ -267,6 +270,26 @@ describe("buildTaxonomySummary", () => {
     expect(taxonomy.suggestedSavedViews.some((view) => view.selector.group === "pc-build")).toBe(true);
     expect(taxonomy.suggestedSavedViews.some((view) => view.selector.tag === "gpu")).toBe(true);
     expect(taxonomy.actionSummary.some((item) => item.includes("Largest current group"))).toBe(true);
+  });
+});
+
+describe("buildHostReportSummary", () => {
+  it("summarizes hosts with signal and cadence context", () => {
+    const hostReport = buildHostReportSummary(store);
+    expect(hostReport).toMatchObject({
+      hostCount: 1,
+    });
+    expect(hostReport.hosts[0]).toMatchObject({
+      host: "shop.test",
+      watchCount: 3,
+      enabledCount: 2,
+      withSnapshots: 2,
+      activeSignals: 2,
+      mediumOrHigherAlerts: 2,
+      noisyCount: 1,
+      glitchyCount: 1,
+    });
+    expect(hostReport.actionSummary.some((item) => item.includes("Most time-sensitive host cadence"))).toBe(true);
   });
 });
 

@@ -781,6 +781,7 @@ export function buildSampleSetup() {
       "deal_watch_set_enabled",
       "deal_watch_search",
       "deal_watch_taxonomy",
+      "deal_host_report",
       "deal_saved_view_list",
       "deal_saved_view_create",
       "deal_saved_view_update",
@@ -829,6 +830,7 @@ export function buildSampleSetup() {
       "Use deal_watch_add_template in dry-run mode to prepare a restock_signal watch for https://example.com/product.",
       "Use deal_watch_add to add a watch for https://example.com/product and then use deal_scan with commit true.",
       "Use deal_watch_taxonomy and suggest the best saved views I should create from my current groups and tags.",
+      "Use deal_host_report and tell me which retailer hosts are driving the most signals right now.",
       "Use deal_watch_search to show me disabled watches and any watches currently showing threshold or keyword signals.",
       "Use deal_saved_view_create to save a view for my GPU watches with active signals, then run it.",
       "Use deal_saved_view_update to rename my GPU view and tighten the selector to only enabled watches with snapshots.",
@@ -866,6 +868,7 @@ export function buildQuickstartGuide() {
       "Use deal_template_list if you want a faster template-driven first watch instead of building fields manually.",
       "Use deal_watch_add to create the first watch.",
       "Use deal_watch_taxonomy once the watchlist grows so you can see which groups, tags, and saved views deserve cleanup.",
+      "Use deal_host_report when you want a retailer-level view of signal density and scan cadence.",
       "Use deal_saved_view_create for repeat searches once your watchlist grows beyond a few items.",
       "Use deal_saved_view_update to keep saved views aligned with how you actually manage the watchlist.",
       "Use deal_watch_tag or deal_watch_bulk_update once you have enough watches to organize by tag or group.",
@@ -882,6 +885,7 @@ export function buildQuickstartGuide() {
       "Use deal_template_list and recommend the right template for a price-target watch.",
       "Use deal_watch_add_template in dry-run mode to show me the exact watch config before saving it.",
       "Use deal_watch_taxonomy and tell me which saved views I should create for my current groups and tags.",
+      "Use deal_host_report and show me which hosts are most active right now.",
       "Use deal_watch_add to add my first watch, then run deal_scan with commit true.",
       "Use deal_report and deal_alerts to summarize the most interesting current deals.",
       "Use deal_view_report for my saved GPU alerts view so I get a compact multi-signal report in one call.",
@@ -2096,6 +2100,135 @@ export function buildTaxonomySummary(
 
 function ungroupedCount(watches: Watch[]): number {
   return watches.filter((watch) => !watch.group?.trim()).length;
+}
+
+export function buildHostReportSummary(
+  store: StoreFile,
+  limit = 10,
+): {
+  hostCount: number;
+  hosts: Array<{
+    host: string;
+    watchCount: number;
+    enabledCount: number;
+    withSnapshots: number;
+    activeSignals: number;
+    mediumOrHigherAlerts: number;
+    noisyCount: number;
+    glitchyCount: number;
+    topTags: string[];
+    topGroups: string[];
+    recommendedMinutes: number;
+    cadenceBasis: string;
+    sampleWatchIds: string[];
+  }>;
+  actionSummary: string[];
+} {
+  const scheduleByHost = new Map(
+    buildScheduleAdvice(store, "host").recommendations.map((recommendation) => [recommendation.target, recommendation]),
+  );
+  const groups = new Map<string, Watch[]>();
+  for (const watch of store.watches) {
+    const host = getWatchHost(watch.url);
+    const existing = groups.get(host) ?? [];
+    existing.push(watch);
+    groups.set(host, existing);
+  }
+
+  const hosts = [...groups.entries()]
+    .map(([host, watches]) => {
+      const tagCounts = new Map<string, number>();
+      const groupCounts = new Map<string, number>();
+      let activeSignals = 0;
+      let mediumOrHigherAlerts = 0;
+      let noisyCount = 0;
+      let glitchyCount = 0;
+
+      for (const watch of watches) {
+        const signals = buildWatchSignals(watch);
+        if (signals.length) activeSignals += 1;
+
+        const history = summarizeHistory(watch);
+        const latestSeverity = history.latestEntry?.alertSeverity;
+        if (latestSeverity === "medium" || latestSeverity === "high") {
+          mediumOrHigherAlerts += 1;
+        }
+
+        if (buildNoiseAssessment(watch, history).score >= 60) {
+          noisyCount += 1;
+        }
+
+        if (buildGlitchAssessment(watch, history, signals).score >= 70) {
+          glitchyCount += 1;
+        }
+
+        for (const tag of watch.tags ?? []) {
+          tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+        }
+        if (watch.group?.trim()) {
+          groupCounts.set(watch.group, (groupCounts.get(watch.group) ?? 0) + 1);
+        }
+      }
+
+      const cadence = scheduleByHost.get(host) ?? {
+        recommendedMinutes: 360,
+        basis: "Insufficient history; defaulting to every 6 hours.",
+        sampleWatchIds: watches.slice(0, 5).map((watch) => watch.id),
+      };
+
+      return {
+        host,
+        watchCount: watches.length,
+        enabledCount: watches.filter((watch) => watch.enabled).length,
+        withSnapshots: watches.filter((watch) => Boolean(watch.lastSnapshot)).length,
+        activeSignals,
+        mediumOrHigherAlerts,
+        noisyCount,
+        glitchyCount,
+        topTags: [...tagCounts.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .slice(0, 3)
+          .map(([tag]) => tag),
+        topGroups: [...groupCounts.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .slice(0, 3)
+          .map(([group]) => group),
+        recommendedMinutes: cadence.recommendedMinutes,
+        cadenceBasis: cadence.basis,
+        sampleWatchIds: cadence.sampleWatchIds,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.watchCount - a.watchCount ||
+        b.activeSignals - a.activeSignals ||
+        a.recommendedMinutes - b.recommendedMinutes ||
+        a.host.localeCompare(b.host),
+    )
+    .slice(0, limit);
+
+  const actionSummary: string[] = [];
+  if (hosts[0]) {
+    actionSummary.push(`Largest host footprint: ${hosts[0].host} (${hosts[0].watchCount} watches).`);
+  }
+  const hottestHost = hosts
+    .filter((host) => host.activeSignals > 0 || host.mediumOrHigherAlerts > 0)
+    .sort((a, b) => b.activeSignals + b.mediumOrHigherAlerts - (a.activeSignals + a.mediumOrHigherAlerts))[0];
+  if (hottestHost) {
+    actionSummary.push(`Most active host right now: ${hottestHost.host} (${hottestHost.activeSignals} active signals, ${hottestHost.mediumOrHigherAlerts} medium+ alerts).`);
+  }
+  const fastestHost = hosts
+    .slice()
+    .sort((a, b) => a.recommendedMinutes - b.recommendedMinutes || b.watchCount - a.watchCount)[0];
+  if (fastestHost) {
+    actionSummary.push(`Most time-sensitive host cadence: ${fastestHost.host} every ${fastestHost.recommendedMinutes} minutes.`);
+  }
+
+  return {
+    hostCount: groups.size,
+    hosts,
+    actionSummary,
+  };
 }
 
 export function buildWorkflowTriage(

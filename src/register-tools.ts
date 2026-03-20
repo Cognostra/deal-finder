@@ -10,6 +10,7 @@ import {
   buildBestPriceBoard,
   buildDoctorSummary,
   buildHealthSummary,
+  buildHostReportSummary,
   buildHistorySummary,
   buildLlmReviewQueue,
   buildMarketCheckSummary,
@@ -1505,6 +1506,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_set_enabled",
               "deal_watch_search",
               "deal_watch_taxonomy",
+              "deal_host_report",
               "deal_saved_view_list",
               "deal_saved_view_create",
               "deal_saved_view_update",
@@ -1550,6 +1552,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_template_list",
               "deal_watch_search",
               "deal_watch_taxonomy",
+              "deal_host_report",
               "deal_saved_view_list",
               "deal_saved_view_run",
               "deal_view_scan",
@@ -1683,6 +1686,28 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         return jsonResult({
           savedView: selection?.summary,
           ...buildTaxonomySummary(scopedStore, params.limit ?? 10),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_host_report",
+      label: "Deal Hunter",
+      description: "Summarize watches by retailer host, including signals, alert density, and recommended cadence.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildHostReportSummary(scopedStore, params.limit ?? 10),
         });
       },
     },
