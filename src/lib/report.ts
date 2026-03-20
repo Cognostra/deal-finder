@@ -761,6 +761,7 @@ export function buildSampleSetup() {
       "deal_help",
       "deal_quickstart",
       "deal_report",
+      "deal_digest",
       "deal_workflow_portfolio",
       "deal_workflow_triage",
       "deal_workflow_cleanup",
@@ -805,6 +806,7 @@ export function buildSampleSetup() {
       "Use deal_watch_tag to tag my GPU watches and group them under pc-build.",
       "Use deal_view_scan with commit true for my GPU alerts saved view, then summarize what changed.",
       "Use deal_view_report for my GPU alerts saved view so I get alerts, trends, drops, and best opportunities in one call.",
+      "Use deal_digest for my GPU alerts saved view so I get a concise announcement-ready summary I can post directly.",
       "Use deal_view_bulk_update in dry-run mode to add the tag featured to all watches in my GPU alerts saved view.",
       "Use deal_watch_dedupe in dry-run mode and show me any likely duplicate watches before I clean up the list.",
       "Use deal_alerts to show me the hottest current signals, then use deal_history for the most interesting watch.",
@@ -830,6 +832,7 @@ export function buildSampleSetup() {
       "Use deal_review_policy to show whether scan-time review is off, queue-only, or auto-assist.",
       "Use deal_workflow_cleanup to show me duplicates, disabled stale watches, weak extraction cases, and noisy watches.",
       "Use deal_workflow_portfolio to give me an executive dashboard of my current watch portfolio.",
+      "Use deal_digest to give me a short summary of what changed and what matters right now.",
       "Use deal_watch_export to back up my watches, then prepare a deal_watch_import dry run for another workspace.",
       "Fetch a shared JSON watchlist with deal_watch_import_url in dry-run mode and show me what would change.",
     ],
@@ -2663,6 +2666,97 @@ export function buildViewReport(
     trends: buildTrendsSummary(scopedStore, limit),
     topDrops: buildTopDropsSummary(scopedStore, options?.metric ?? "vs_peak", limit),
     bestOpportunities: buildWorkflowBestOpportunities(scopedStore, Math.min(limit, 5)),
+  };
+}
+
+export function buildDigestSummary(
+  store: StoreFile,
+  options?: {
+    limit?: number;
+    severity?: AlertSeverity;
+    scopeLabel?: string;
+  },
+): {
+  scopeLabel: string;
+  watchCount: number;
+  headline: string;
+  topLine: string;
+  highlights: string[];
+  actions: string[];
+  digestText: string;
+  bestOpportunity?: ReturnType<typeof buildWorkflowBestOpportunities>["topRealDeals"][number];
+  suspiciousOpportunity?: ReturnType<typeof buildWorkflowBestOpportunities>["suspiciousDeals"][number];
+  strongestAlerts: ReturnType<typeof buildAlertsSummary>["alerts"];
+  changed: ReturnType<typeof buildWorkflowTriage>["changed"];
+  probableNoise: ReturnType<typeof buildWorkflowTriage>["probableNoise"];
+} {
+  const limit = options?.limit ?? 5;
+  const scopeLabel = options?.scopeLabel ?? "watchlist";
+  const triage = buildWorkflowTriage(store, limit, options?.severity ?? "medium");
+  const best = buildWorkflowBestOpportunities(store, Math.min(limit, 5));
+  const changedCount = triage.changed.length;
+  const alertCount = triage.strongestAlerts.length;
+  const noisyCount = triage.probableNoise.length;
+
+  const headlineParts = [`${scopeLabel}: ${store.watches.length} watch${store.watches.length === 1 ? "" : "es"}`];
+  if (changedCount) headlineParts.push(`${changedCount} recent change${changedCount === 1 ? "" : "s"}`);
+  if (alertCount) headlineParts.push(`${alertCount} active alert${alertCount === 1 ? "" : "s"}`);
+  const headline = headlineParts.join(", ");
+
+  let topLine = `No urgent movement detected in ${scopeLabel}.`;
+  if (triage.bestOpportunity) {
+    const priceText = triage.bestOpportunity.latestPrice != null ? ` at ${triage.bestOpportunity.latestPrice.toFixed(2)}` : "";
+    topLine = `Best current opportunity in ${scopeLabel}: ${triage.bestOpportunity.label ?? triage.bestOpportunity.watchId}${priceText}.`;
+  } else if (triage.strongestAlerts[0]) {
+    topLine = `Top alert in ${scopeLabel}: ${triage.strongestAlerts[0].label ?? triage.strongestAlerts[0].watchId}.`;
+  }
+
+  const highlights: string[] = [];
+  if (triage.bestOpportunity) {
+    highlights.push(
+      `Best likely-real deal: ${triage.bestOpportunity.label ?? triage.bestOpportunity.watchId}${triage.bestOpportunity.marketSpreadPercent != null ? ` (${triage.bestOpportunity.marketSpreadPercent.toFixed(1)}% internal spread)` : ""}.`,
+    );
+  }
+  if (triage.suspiciousOpportunity) {
+    highlights.push(
+      `Most suspicious/glitch-prone watch: ${triage.suspiciousOpportunity.label ?? triage.suspiciousOpportunity.watchId} (glitch score ${triage.suspiciousOpportunity.glitchScore}).`,
+    );
+  }
+  if (triage.changed[0]) {
+    highlights.push(`Most recent meaningful change: ${triage.changed[0].label ?? triage.changed[0].watchId}.`);
+  }
+  if (triage.strongestAlerts[0] && !highlights.some((line) => line.includes(triage.strongestAlerts[0]!.label ?? triage.strongestAlerts[0]!.watchId))) {
+    highlights.push(`Strongest alert: ${triage.strongestAlerts[0].label ?? triage.strongestAlerts[0].watchId}.`);
+  }
+  if (noisyCount) {
+    highlights.push(`${noisyCount} watch${noisyCount === 1 ? "" : "es"} currently look noisy or suspicious.`);
+  }
+
+  const actions = [...triage.actionSummary];
+  for (const action of best.actionSummary) {
+    if (!actions.includes(action)) actions.push(action);
+  }
+
+  const digestLines = [
+    headline,
+    topLine,
+    ...(highlights.length ? ["Highlights:", ...highlights.map((line) => `- ${line}`)] : []),
+    ...(actions.length ? ["Actions:", ...actions.map((line) => `- ${line}`)] : []),
+  ];
+
+  return {
+    scopeLabel,
+    watchCount: store.watches.length,
+    headline,
+    topLine,
+    highlights,
+    actions,
+    digestText: digestLines.join("\n"),
+    bestOpportunity: triage.bestOpportunity,
+    suspiciousOpportunity: triage.suspiciousOpportunity,
+    strongestAlerts: triage.strongestAlerts,
+    changed: triage.changed,
+    probableNoise: triage.probableNoise,
   };
 }
 

@@ -4,6 +4,7 @@ import type { StoreFile } from "../types.js";
 import {
   buildAlertsSummary,
   buildBestPriceBoard,
+  buildDigestSummary,
   buildDiscoveryBacklog,
   buildDiscoveryReport,
   buildDoctorSummary,
@@ -212,6 +213,19 @@ describe("buildStoreReport", () => {
       watchId: "watch-3",
       glitchScore: 95,
     });
+  });
+});
+
+describe("buildDigestSummary", () => {
+  it("produces a concise digest from the existing workflow signals", () => {
+    const digest = buildDigestSummary(store, { scopeLabel: "gpu alerts", limit: 3, severity: "medium" });
+    expect(digest.scopeLabel).toBe("gpu alerts");
+    expect(digest.headline).toContain("gpu alerts");
+    expect(digest.topLine).toContain("opportunity");
+    expect(digest.highlights.length).toBeGreaterThan(0);
+    expect(digest.actions.length).toBeGreaterThan(0);
+    expect(digest.digestText).toContain("Highlights:");
+    expect(digest.digestText).toContain("Actions:");
   });
 });
 

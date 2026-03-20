@@ -12,6 +12,7 @@ import { describeReviewPolicy } from "./lib/review-policy.js";
 import {
   buildAlertsSummary,
   buildBestPriceBoard,
+  buildDigestSummary,
   buildDiscoveryBacklog,
   buildDoctorSummary,
   buildDiscoveryReport,
@@ -1729,6 +1730,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_watch_import",
               "deal_watch_import_url",
               "deal_scan",
+              "deal_digest",
               "deal_workflow_portfolio",
               "deal_workflow_triage",
               "deal_workflow_cleanup",
@@ -1772,6 +1774,7 @@ export function registerDealTools(api: OpenClawPluginApi): void {
               "deal_extraction_debug",
               "deal_evaluate_text",
               "deal_help",
+              "deal_digest",
               "deal_history",
               "deal_alerts",
               "deal_trends",
@@ -1878,6 +1881,37 @@ export function registerDealTools(api: OpenClawPluginApi): void {
         return jsonResult({
           ...report,
           watches: store.watches.map(toWatchView),
+        });
+      },
+    },
+    { optional: false },
+  );
+
+  api.registerTool(
+    {
+      name: "deal_digest",
+      label: "Deal Hunter",
+      description: "Produce a concise announcement-ready digest of what changed, what matters, and what to review next for the whole watchlist or a saved view.",
+      parameters: Type.Object({
+        savedViewId: Type.Optional(Type.String()),
+        severity: Type.Optional(Type.Union([
+          Type.Literal("low"),
+          Type.Literal("medium"),
+          Type.Literal("high"),
+        ])),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+      }),
+      execute: async (_id, params) => {
+        const store = await loadStore(storePath);
+        const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
+        const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
+        return jsonResult({
+          savedView: selection?.summary,
+          ...buildDigestSummary(scopedStore, {
+            limit: params.limit ?? 5,
+            severity: params.severity ?? "medium",
+            scopeLabel: selection?.summary?.name ?? "watchlist",
+          }),
         });
       },
     },

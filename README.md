@@ -111,6 +111,7 @@ agents: {
           "deal_help",
           "deal_quickstart",
           "deal_report",
+          "deal_digest",
           "deal_workflow_portfolio",
           "deal_workflow_triage",
           "deal_workflow_cleanup",
@@ -174,6 +175,7 @@ agents: {
 | `deal_help` | Show install, tool, cron, and safety guidance from inside OpenClaw. |
 | `deal_quickstart` | Show a first-run checklist, starter prompts, and privacy/safety reminders. |
 | `deal_report` | Summarize the watchlist, price leaders, recent changes, noisy watches, and glitch candidates. |
+| `deal_digest` | Produce a concise announcement-ready digest for the whole watchlist or one saved view. |
 | `deal_workflow_portfolio` | Build a portfolio dashboard for the whole watchlist or a saved view. |
 | `deal_workflow_triage` | Answer what changed, what matters, what looks noisy, and what to review first. |
 | `deal_workflow_cleanup` | Surface duplicates, stale/disabled items, weak extraction cases, and noisy cleanup candidates. |
@@ -223,7 +225,7 @@ Recommended first-run workflow:
 12. `deal_watch_tag`, `deal_watch_bulk_update`, or `deal_view_bulk_update` to organize watches into tags and groups as the list grows.
 13. `deal_watch_dedupe` in dry-run mode before imports or cleanup work.
 14. `deal_scan` with `commit: true` to capture snapshots, then `deal_view_scan` when you want to scan only one saved slice.
-15. `deal_view_report`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
+15. `deal_view_report`, `deal_digest`, `deal_workflow_triage`, `deal_history`, `deal_alerts`, `deal_trends`, and `deal_top_drops` to inspect recent movement and ranked opportunities.
 16. `deal_market_check_candidates` when you have a few explicit retailer URLs and want same-product evidence before adding them as watches.
 17. `deal_discovery_backlog` to decide which enabled watches most deserve discovery effort first.
 18. `deal_discovery_policy` if you want to verify the current discovery mode, host allowlists, and search/fetch budgets before running discovery tools.
@@ -242,7 +244,7 @@ Recommended first-run workflow:
 31. `deal_watch_import` with `dryRun: true` before applying migrated watchlists from a local export.
 32. `deal_watch_import_url` with `dryRun: true` before applying a shared remote watchlist.
 33. `deal_watch_update` or `deal_watch_set_enabled` for single-watch changes.
-34. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_watch_provenance`, `deal_schedule_advice`, `deal_report`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
+34. `deal_market_check`, `deal_watch_identity`, `deal_watch_insights`, `deal_watch_provenance`, `deal_schedule_advice`, `deal_report`, `deal_digest`, `deal_workflow_portfolio`, `deal_health`, and `deal_doctor` to audit the current state of the plugin.
 
 `deal_scan` responses now include compact model-friendly fields per watch:
 
