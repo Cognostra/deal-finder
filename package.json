@@ -1,6 +1,6 @@
 {
   "name": "openclaw-deal-hunter",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "OpenClaw plugin: price watches, safe scans, and heuristic deal signals",
   "type": "module",
   "main": "./dist/index.js",
