@@ -4,6 +4,7 @@ dist/
 .DS_Store
 scanner/deal-scanner
 openclaw/
+docs/
 .openclaw-test/
 .openclaw-pack-test/
 .openclaw-pack-test-escalated/
