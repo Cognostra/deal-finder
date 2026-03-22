@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "savedViews": [
+    {
+      "id": "view-1",
+      "name": "Active GPUs",
+      "selector": {
+        "tag": "gpu",
+        "enabled": true
+      },
+      "createdAt": "2026-03-20T00:00:00.000Z"
+    }
+  ],
+  "watches": [
+    {
+      "id": "watch-rich-1",
+      "url": "https://shop.test/gpu",
+      "label": "GPU Watch",
+      "group": "pc-build",
+      "tags": ["gpu", "pc"],
+      "enabled": true,
+      "createdAt": "2026-03-20T00:00:00.000Z",
+      "importSource": {
+        "type": "discovery",
+        "importedAt": "2026-03-20T00:10:00.000Z",
+        "discoveryProvider": "firecrawl-search",
+        "sourceWatchId": "watch-anchor-1",
+        "sourceWatchUrl": "https://shop.test/original-gpu",
+        "sourceWatchLabel": "Anchor GPU",
+        "candidateUrl": "https://shop.test/gpu",
+        "searchQuery": "rtx gpu",
+        "searchRank": 1,
+        "searchTitle": "RTX GPU",
+        "searchDescription": "Top search result"
+      },
+      "lastSnapshot": {
+        "title": "RTX GPU",
+        "canonicalTitle": "rtx gpu",
+        "brand": "Nvidia",
+        "modelId": "RTX-123",
+        "price": 499.99,
+        "currency": "USD",
+        "fetchedAt": "2026-03-20T01:00:00.000Z",
+        "fetchSource": "node_http",
+        "responseBytes": 1024,
+        "responseTruncated": true,
+        "reviewedFields": [
+          {
+            "field": "brand",
+            "originalValue": null,
+            "reviewedValue": "Nvidia",
+            "reviewSource": "deal_llm_review_apply",
+            "reviewedAt": "2026-03-20T01:10:00.000Z",
+            "provider": "ollama",
+            "model": "qwen2.5:1.5b"
+          }
+        ]
+      },
+      "history": [
+        {
+          "fetchedAt": "2026-03-20T01:00:00.000Z",
+          "price": 499.99,
+          "currency": "USD",
+          "canonicalTitle": "rtx gpu",
+          "changeType": "price_drop",
+          "alertSeverity": "high",
+          "fetchSource": "node_http",
+          "responseTruncated": true,
+          "summaryLine": "RTX GPU: 499.99 USD; price dropped; high alert"
+        }
+      ]
+    }
+  ]
+}

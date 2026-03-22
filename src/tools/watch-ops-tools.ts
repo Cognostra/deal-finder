@@ -2,16 +2,17 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "../config.js";
-import { mergeCommittedScanResults, runScan } from "../lib/engine.js";
+import { runScan } from "../lib/engine.js";
 import { cappedFetch } from "../lib/fetch.js";
 import { debugExtractListing, evaluateListingText } from "../lib/heuristics.js";
-import { describeReviewPolicy } from "../lib/review-policy.js";
 import { saveStore } from "../lib/store.js";
 import { canonicalizeWatchUrl, validateTargetUrl } from "../lib/url-policy.js";
 import { buildScanSummary, type ToolContext } from "./shared.js";
+import { createToolRuntimeServices } from "./runtime-services.js";
 
 export function registerWatchOpsTools(api: OpenClawPluginApi, ctx: ToolContext): void {
   const { storePath, withStore } = ctx;
+  const runtime = createToolRuntimeServices(api, ctx);
 
   api.registerTool(
     {
@@ -21,7 +22,7 @@ export function registerWatchOpsTools(api: OpenClawPluginApi, ctx: ToolContext):
       parameters: Type.Object({}),
       execute: async () => {
         const cfg = resolveDealConfig(api);
-        return jsonResult(describeReviewPolicy(cfg));
+        return jsonResult(runtime.services.review.describePolicy(cfg));
       },
     },
     { optional: false },
@@ -54,7 +55,7 @@ export function registerWatchOpsTools(api: OpenClawPluginApi, ctx: ToolContext):
         let commitSummary = null;
         if (commit) {
           commitSummary = await withStore(async (store) => {
-            const summary = mergeCommittedScanResults(store, results, cfg);
+            const summary = runtime.services.scanCommit.merge(store, results, cfg);
             await saveStore(storePath, store);
             return summary;
           });

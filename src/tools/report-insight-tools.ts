@@ -6,101 +6,81 @@ import { cappedFetch } from "../lib/fetch.js";
 import { canonicalizeTitle, debugExtractListing } from "../lib/heuristics.js";
 import { runLlmReviewCandidate } from "../lib/llm-review.js";
 import { buildExternalProductMatchCandidate } from "../lib/product-identity.js";
-import {
-  buildAlertsSummary,
-  buildBestPriceBoard,
-  buildHistorySummary,
-  buildLlmReviewQueue,
-  buildMarketCheckSummary,
-  buildProductGroupsSummary,
-  buildScheduleAdvice,
-  buildTopDropsSummary,
-  buildTrendsSummary,
-  buildWatchIdentitySummary,
-  buildWatchInsights,
-  buildWatchProvenanceSummary,
-  listLlmReviewCandidates,
-} from "../lib/report.js";
+import { listLlmReviewCandidates } from "../lib/report.js";
 import { applyWatchSnapshotPatch, getWatch, loadStore, saveStore } from "../lib/store.js";
 import { buildScopedStore, resolveSavedViewSelection, type ToolContext, watchNotFoundResult } from "./shared.js";
 import { validateTargetUrl } from "../lib/url-policy.js";
+import { createToolRuntimeServices } from "./runtime-services.js";
 
 export function registerReportInsightTools(api: OpenClawPluginApi, ctx: ToolContext): void {
   const { storePath, withStore } = ctx;
+  const runtime = createToolRuntimeServices(api, ctx);
 
   api.registerTool({ name: "deal_history", label: "Deal Hunter", description: "Show stored price history and recent changes for one watch or summarize history across watches.", parameters: Type.Object({
     watchId: Type.Optional(Type.String()),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const limit = params.limit ?? 20;
-    if (params.watchId) {
-      const watch = getWatch(store, params.watchId);
-      if (!watch) return watchNotFoundResult();
-      return jsonResult(buildHistorySummary(watch, limit));
-    }
-    const watches = store.watches.filter((watch) => Boolean(watch.history?.length)).map((watch) => buildHistorySummary(watch, Math.min(limit, 5))).sort((a, b) => (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? "")).slice(0, limit);
-    return jsonResult({ count: watches.length, watches });
+    const result = await runtime.services.reporting.getHistory({ watchId: params.watchId, limit: params.limit });
+    if (!result) return watchNotFoundResult();
+    return jsonResult(result);
   } }, { optional: false });
 
   api.registerTool({ name: "deal_alerts", label: "Deal Hunter", description: "Show the hottest current threshold, keyword, and recent change signals across the watchlist.", parameters: Type.Object({
     severity: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    return jsonResult(buildAlertsSummary(store, params.severity ?? "low", params.limit ?? 20));
+    return jsonResult(await runtime.services.reporting.getAlerts({
+      severity: params.severity ?? "low",
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_trends", label: "Deal Hunter", description: "Summarize watch trends, including falling, rising, flat, and volatile watches.", parameters: Type.Object({
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    return jsonResult(buildTrendsSummary(store, params.limit ?? 20));
+    return jsonResult(await runtime.services.reporting.getTrends(params.limit));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_top_drops", label: "Deal Hunter", description: "Rank the strongest drops by current discount from peak or the latest committed move.", parameters: Type.Object({
     metric: Type.Optional(Type.Union([Type.Literal("vs_peak"), Type.Literal("latest_change")])),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    return jsonResult(buildTopDropsSummary(store, params.metric ?? "vs_peak", params.limit ?? 10));
+    return jsonResult(await runtime.services.reporting.getTopDrops(params.metric ?? "vs_peak", params.limit));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_watch_insights", label: "Deal Hunter", description: "Explain one watch in depth: trend, volatility, glitch risk, current position, and active signals.", parameters: Type.Object({
     watchId: Type.String(),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const watch = getWatch(store, params.watchId);
-    if (!watch) return watchNotFoundResult();
-    return jsonResult(buildWatchInsights(watch));
+    const result = await runtime.services.reporting.getWatchInsights(params.watchId);
+    if (!result) return watchNotFoundResult();
+    return jsonResult(result);
   } }, { optional: false });
 
   api.registerTool({ name: "deal_watch_provenance", label: "Deal Hunter", description: "Show how one watch entered the store, what the latest committed snapshot came from, and whether any reviewed fields or truncation warnings exist.", parameters: Type.Object({
     watchId: Type.String(),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const watch = getWatch(store, params.watchId);
-    if (!watch) return watchNotFoundResult();
-    return jsonResult(buildWatchProvenanceSummary(watch));
+    const result = await runtime.services.reporting.getWatchProvenance(params.watchId);
+    if (!result) return watchNotFoundResult();
+    return jsonResult(result);
   } }, { optional: false });
 
   api.registerTool({ name: "deal_watch_identity", label: "Deal Hunter", description: "Show stored product identifiers for a watch and any other watches sharing those identifiers.", parameters: Type.Object({
     watchId: Type.String(),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const watch = getWatch(store, params.watchId);
-    if (!watch) return watchNotFoundResult();
-    return jsonResult(buildWatchIdentitySummary(store, watch));
+    const result = await runtime.services.reporting.getWatchIdentity(params.watchId);
+    if (!result) return watchNotFoundResult();
+    return jsonResult(result);
   } }, { optional: false });
 
   api.registerTool({ name: "deal_market_check", label: "Deal Hunter", description: "Compare one watch against likely same-product watches already in the current store and summarize price spread.", parameters: Type.Object({
     watchId: Type.String(),
     includeLooseTitleFallback: Type.Optional(Type.Boolean()),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const watch = getWatch(store, params.watchId);
-    if (!watch) return watchNotFoundResult();
-    return jsonResult(buildMarketCheckSummary(store, watch, { includeLooseTitleFallback: params.includeLooseTitleFallback }));
+    const result = await runtime.services.reporting.getMarketCheck(params.watchId, {
+      includeLooseTitleFallback: params.includeLooseTitleFallback,
+    });
+    if (!result) return watchNotFoundResult();
+    return jsonResult(result);
   } }, { optional: false });
 
   api.registerTool({ name: "deal_market_check_candidates", label: "Deal Hunter", description: "Fetch explicit candidate URLs and compare them against one anchor watch without importing anything.", parameters: Type.Object({
@@ -155,10 +135,12 @@ export function registerReportInsightTools(api: OpenClawPluginApi, ctx: ToolCont
     minMatchScore: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildProductGroupsSummary(scopedStore, { includeLooseTitleFallback: params.includeLooseTitleFallback, minMatchScore: params.minMatchScore, limit: params.limit ?? 20 }) });
+    return jsonResult(await runtime.services.reporting.getProductGroups({
+      savedViewId: params.savedViewId,
+      includeLooseTitleFallback: params.includeLooseTitleFallback,
+      minMatchScore: params.minMatchScore,
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_best_price_board", label: "Deal Hunter", description: "Rank product groups by current internal same-product price spread and identify the best-known watch in each group.", parameters: Type.Object({
@@ -167,20 +149,22 @@ export function registerReportInsightTools(api: OpenClawPluginApi, ctx: ToolCont
     minMatchScore: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildBestPriceBoard(scopedStore, { includeLooseTitleFallback: params.includeLooseTitleFallback, minMatchScore: params.minMatchScore, limit: params.limit ?? 20 }) });
+    return jsonResult(await runtime.services.reporting.getBestPriceBoard({
+      savedViewId: params.savedViewId,
+      includeLooseTitleFallback: params.includeLooseTitleFallback,
+      minMatchScore: params.minMatchScore,
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_llm_review_queue", label: "Deal Hunter", description: "Prepare low-confidence extraction or identity cases for optional manual or llm-task-based JSON review without making this plugin depend on llm-task.", parameters: Type.Object({
     savedViewId: Type.Optional(Type.String()),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildLlmReviewQueue(scopedStore, params.limit ?? 10) });
+    return jsonResult(await runtime.services.reporting.getLlmReviewQueue({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_llm_review_run", label: "Deal Hunter", description: "Run one queued extraction or identity review through the embedded OpenClaw agent runtime and return JSON output.", parameters: Type.Object({
@@ -323,7 +307,6 @@ export function registerReportInsightTools(api: OpenClawPluginApi, ctx: ToolCont
   api.registerTool({ name: "deal_schedule_advice", label: "Deal Hunter", description: "Recommend scan cadence by host or watch based on observed history timing.", parameters: Type.Object({
     mode: Type.Optional(Type.Union([Type.Literal("host"), Type.Literal("watch")])),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    return jsonResult(buildScheduleAdvice(store, params.mode ?? "host"));
+    return jsonResult(await runtime.services.reporting.getScheduleAdvice(params.mode ?? "host"));
   } }, { optional: false });
 }

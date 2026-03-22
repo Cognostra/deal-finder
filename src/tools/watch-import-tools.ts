@@ -4,13 +4,14 @@ import { jsonResult } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "../config.js";
 import { cappedFetch } from "../lib/fetch.js";
 import type { ImportedWatchInput } from "../lib/store.js";
-import { importWatches, loadStore, parseImportedWatchPayload, saveStore } from "../lib/store.js";
-import { canonicalizeWatchUrl, validateTargetUrl } from "../lib/url-policy.js";
+import { parseImportedWatchPayload } from "../lib/store.js";
+import { validateTargetUrl } from "../lib/url-policy.js";
 import { toWatchView, type ToolContext } from "./shared.js";
+import { createToolRuntimeServices } from "./runtime-services.js";
 import { IMPORTED_WATCH_SCHEMA, mergeImportedTags } from "./watch-admin-shared.js";
 
 export function registerWatchImportTools(api: OpenClawPluginApi, ctx: ToolContext): void {
-  const { storePath, withStore } = ctx;
+  const runtime = createToolRuntimeServices(api, ctx);
 
   api.registerTool(
     {
@@ -24,33 +25,12 @@ export function registerWatchImportTools(api: OpenClawPluginApi, ctx: ToolContex
         includeHistory: Type.Optional(Type.Boolean()),
       }),
       execute: async (_id, params) => {
-        const store = await loadStore(storePath);
-        const allowedIds = params.watchIds?.length ? new Set(params.watchIds) : null;
-        const includeDisabled = params.includeDisabled === true;
-        const includeSnapshots = params.includeSnapshots !== false;
-        const includeHistory = params.includeHistory !== false;
-
-        const watches = store.watches
-          .filter((watch) => (includeDisabled ? true : watch.enabled))
-          .filter((watch) => (allowedIds ? allowedIds.has(watch.id) : true))
-          .map((watch) => {
-            const exported = structuredClone(watch);
-            if (!includeSnapshots) {
-              exported.lastSnapshot = undefined;
-            }
-            if (!includeHistory) {
-              exported.history = undefined;
-            }
-            return exported;
-          });
-
-        return jsonResult({
-          exportedAt: new Date().toISOString(),
-          count: watches.length,
-          includeSnapshots,
-          includeHistory,
-          watches,
-        });
+        return jsonResult(await runtime.services.watch.exportWatches({
+          watchIds: params.watchIds,
+          includeDisabled: params.includeDisabled,
+          includeSnapshots: params.includeSnapshots,
+          includeHistory: params.includeHistory,
+        }));
       },
     },
     { optional: false },
@@ -73,31 +53,14 @@ export function registerWatchImportTools(api: OpenClawPluginApi, ctx: ToolContex
       execute: async (_id, params) => {
         const cfg = resolveDealConfig(api);
         const mode = params.mode ?? "upsert";
-        const normalizedWatches = params.watches.map((watch: ImportedWatchInput) => ({
-          ...watch,
-          url: canonicalizeWatchUrl(watch.url, cfg).toString(),
-        }));
-
-        let result = {
-          added: 0,
-          updated: 0,
-          replaced: false,
-          imported: [] as Awaited<ReturnType<typeof loadStore>>["watches"],
-          matchedById: 0,
-          matchedByUrl: 0,
-        };
-
-        await withStore(async (store) => {
-          const target = params.dryRun ? structuredClone(store) : store;
-          result = importWatches(target, normalizedWatches, mode);
-          if (!params.dryRun) {
-            await saveStore(storePath, target);
-          }
-        });
+        const dryRun = params.dryRun === true;
+        const result = dryRun
+          ? await runtime.services.watch.previewImport(params.watches as ImportedWatchInput[], mode, cfg)
+          : await runtime.services.watch.importWatches(params.watches as ImportedWatchInput[], mode, cfg);
 
         return jsonResult({
           ok: true,
-          dryRun: params.dryRun === true,
+          dryRun,
           mode,
           added: result.added,
           updated: result.updated,
@@ -151,38 +114,30 @@ export function registerWatchImportTools(api: OpenClawPluginApi, ctx: ToolContex
         const remoteWatches = parseImportedWatchPayload(payload);
         const normalizedWatches = remoteWatches.map((watch: ImportedWatchInput) => ({
           ...watch,
-          url: canonicalizeWatchUrl(watch.url, cfg).toString(),
           group: params.group ?? watch.group,
           tags: mergeImportedTags(watch.tags, params.addTags),
           enabled: params.enabled ?? watch.enabled,
         }));
-
-        let result = {
-          added: 0,
-          updated: 0,
-          replaced: false,
-          imported: [] as Awaited<ReturnType<typeof loadStore>>["watches"],
-          matchedById: 0,
-          matchedByUrl: 0,
-        };
-
-        await withStore(async (store) => {
-          const target = params.dryRun === false ? store : structuredClone(store);
-          result = importWatches(target, normalizedWatches, mode, {
-            importSourceOverride: {
-              type: "url",
-              url: importUrl,
-              importedAt,
-            },
-          });
-          if (params.dryRun === false) {
-            await saveStore(storePath, target);
-          }
-        });
+        const dryRun = params.dryRun !== false;
+        const result = dryRun
+          ? await runtime.services.watch.previewImport(normalizedWatches, mode, cfg, {
+              importSourceOverride: {
+                type: "url",
+                url: importUrl,
+                importedAt,
+              },
+            })
+          : await runtime.services.watch.importWatches(normalizedWatches, mode, cfg, {
+              importSourceOverride: {
+                type: "url",
+                url: importUrl,
+                importedAt,
+              },
+            });
 
         return jsonResult({
           ok: true,
-          dryRun: params.dryRun !== false,
+          dryRun,
           mode,
           sourceUrl: importUrl,
           sourceCount: remoteWatches.length,

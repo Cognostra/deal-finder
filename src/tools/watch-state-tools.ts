@@ -2,13 +2,12 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "../config.js";
-import { addWatch, getWatch, loadStore, removeWatch, saveStore, setWatchEnabled, updateWatch } from "../lib/store.js";
-import { searchWatches } from "../lib/watch-view.js";
-import { canonicalizeWatchUrl } from "../lib/url-policy.js";
 import { toWatchView, type ToolContext } from "./shared.js";
+import { createToolRuntimeServices } from "./runtime-services.js";
 
 export function registerWatchStateTools(api: OpenClawPluginApi, ctx: ToolContext): void {
-  const { storePath, withStore } = ctx;
+  const { storePath } = ctx;
+  const runtime = createToolRuntimeServices(api, ctx);
 
   api.registerTool(
     {
@@ -19,8 +18,7 @@ export function registerWatchStateTools(api: OpenClawPluginApi, ctx: ToolContext
         includeDisabled: Type.Optional(Type.Boolean({ description: "Include disabled watches" })),
       }),
       execute: async (_id, params) => {
-        const store = await loadStore(storePath);
-        const list = params.includeDisabled ? store.watches : store.watches.filter((w) => w.enabled);
+        const list = await runtime.services.watch.list(params.includeDisabled === true);
         return jsonResult({ watches: list.map(toWatchView), storePath });
       },
     },
@@ -45,22 +43,18 @@ export function registerWatchStateTools(api: OpenClawPluginApi, ctx: ToolContext
       }),
       execute: async (_id, params) => {
         const cfg = resolveDealConfig(api);
-        const normalizedUrl = canonicalizeWatchUrl(params.url, cfg).toString();
-        await withStore(async (store) => {
-          addWatch(store, {
-            url: normalizedUrl,
-            label: params.label,
-            group: params.group,
-            tags: params.tags,
-            maxPrice: params.maxPrice,
-            percentDrop: params.percentDrop,
-            keywords: params.keywords,
-            checkIntervalHint: params.checkIntervalHint,
-            enabled: params.enabled,
-          });
-          await saveStore(storePath, store);
-        });
-        return jsonResult({ ok: true, message: "Watch added." });
+        const watch = await runtime.services.watch.add({
+          url: params.url,
+          label: params.label,
+          group: params.group,
+          tags: params.tags,
+          maxPrice: params.maxPrice,
+          percentDrop: params.percentDrop,
+          keywords: params.keywords,
+          checkIntervalHint: params.checkIntervalHint,
+          enabled: params.enabled,
+        }, cfg);
+        return jsonResult({ ok: true, message: "Watch added.", watch: toWatchView(watch) });
       },
     },
     { optional: true },
@@ -86,24 +80,18 @@ export function registerWatchStateTools(api: OpenClawPluginApi, ctx: ToolContext
       }),
       execute: async (_id, params) => {
         const cfg = resolveDealConfig(api);
-        let updatedWatch = null;
-
-        await withStore(async (store) => {
-          const normalizedUrl = params.url ? canonicalizeWatchUrl(params.url, cfg).toString() : undefined;
-          updatedWatch = updateWatch(store, params.watchId, {
-            url: normalizedUrl,
-            label: params.label,
-            group: params.group,
-            tags: params.tags,
-            maxPrice: params.maxPrice,
-            percentDrop: params.percentDrop,
-            keywords: params.keywords,
-            checkIntervalHint: params.checkIntervalHint,
-            enabled: params.enabled,
-            clearLastSnapshot: params.clearLastSnapshot,
-          });
-          if (updatedWatch) await saveStore(storePath, store);
-        });
+        const updatedWatch = await runtime.services.watch.update(params.watchId, {
+          url: params.url,
+          label: params.label,
+          group: params.group,
+          tags: params.tags,
+          maxPrice: params.maxPrice,
+          percentDrop: params.percentDrop,
+          keywords: params.keywords,
+          checkIntervalHint: params.checkIntervalHint,
+          enabled: params.enabled,
+          clearLastSnapshot: params.clearLastSnapshot,
+        }, cfg);
 
         if (!updatedWatch) {
           return {
@@ -128,19 +116,10 @@ export function registerWatchStateTools(api: OpenClawPluginApi, ctx: ToolContext
         enabled: Type.Boolean(),
       }),
       execute: async (_id, params) => {
-        let result = { updatedIds: [] as string[], missingIds: [] as string[] };
-        let watches: ReturnType<typeof toWatchView>[] = [];
-
-        await withStore(async (store) => {
-          result = setWatchEnabled(store, params.watchIds, params.enabled);
-          if (result.updatedIds.length > 0) {
-            await saveStore(storePath, store);
-          }
-          watches = result.updatedIds
-            .map((id) => getWatch(store, id))
-            .filter((watch): watch is NonNullable<typeof watch> => Boolean(watch))
-            .map(toWatchView);
-        });
+        const result = await runtime.services.watch.setEnabled(params.watchIds, params.enabled);
+        const watches = (await Promise.all(result.updatedIds.map((id) => runtime.services.watch.get(id))))
+          .filter((watch): watch is NonNullable<typeof watch> => Boolean(watch))
+          .map(toWatchView);
 
         return jsonResult({
           ok: true,
@@ -165,11 +144,7 @@ export function registerWatchStateTools(api: OpenClawPluginApi, ctx: ToolContext
         watchId: Type.String(),
       }),
       execute: async (_id, params) => {
-        let removed = false;
-        await withStore(async (store) => {
-          removed = removeWatch(store, params.watchId);
-          if (removed) await saveStore(storePath, store);
-        });
+        const removed = await runtime.services.watch.remove(params.watchId);
         if (!removed) {
           return {
             content: [{ type: "text", text: JSON.stringify({ ok: false, error: "watch not found" }, null, 2) }],
@@ -203,8 +178,10 @@ export function registerWatchStateTools(api: OpenClawPluginApi, ctx: ToolContext
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
       }),
       execute: async (_id, params) => {
-        const store = await loadStore(storePath);
-        const matches = searchWatches(store.watches, params);
+        const [store, matches] = await Promise.all([
+          runtime.repositories.watchRepository.loadStore(),
+          runtime.services.watch.search(params),
+        ]);
         const views = matches.map(toWatchView);
 
         return jsonResult({

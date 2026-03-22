@@ -2,13 +2,14 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "../config.js";
-import { describeDiscoveryPolicy, fetchDiscoveryCandidates, searchDiscoveryCandidates } from "../lib/discovery.js";
 import { buildDiscoveryBacklog, buildDiscoveryReport } from "../lib/report.js";
 import { getWatch, importWatches, loadStore, saveStore } from "../lib/store.js";
 import { buildScopedStore, buildDiscoveryFetchSummary, buildDiscoveryWorkflow, ensureDiscoveryEnabled, ensureProviderDiscoveryEnabled, resolveSavedViewSelection, toDiscoveryAnchor, type ToolContext, watchNotFoundResult } from "./shared.js";
+import { createToolRuntimeServices } from "./runtime-services.js";
 
 export function registerDiscoveryTools(api: OpenClawPluginApi, ctx: ToolContext): void {
   const { storePath, withStore } = ctx;
+  const runtime = createToolRuntimeServices(api, ctx);
 
   api.registerTool(
     {
@@ -40,7 +41,7 @@ export function registerDiscoveryTools(api: OpenClawPluginApi, ctx: ToolContext)
       parameters: Type.Object({}),
       execute: async () => {
         const cfg = resolveDealConfig(api);
-        return jsonResult(describeDiscoveryPolicy(cfg));
+        return jsonResult(runtime.services.discovery.describePolicy(cfg));
       },
     },
     { optional: false },
@@ -120,7 +121,7 @@ export function registerDiscoveryTools(api: OpenClawPluginApi, ctx: ToolContext)
         if (!watch) {
           return watchNotFoundResult();
         }
-        const search = await searchDiscoveryCandidates({
+        const search = await runtime.services.discovery.search({
           watch,
           cfg,
           allowedHosts: params.allowedHosts,
@@ -167,7 +168,7 @@ export function registerDiscoveryTools(api: OpenClawPluginApi, ctx: ToolContext)
         if (!watch) {
           return watchNotFoundResult();
         }
-        const candidates = await fetchDiscoveryCandidates({
+        const candidates = await runtime.services.discovery.fetch({
           watch,
           candidateUrls: params.candidateUrls,
           cfg,

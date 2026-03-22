@@ -2,13 +2,13 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "../config.js";
-import { addWatch, saveStore } from "../lib/store.js";
 import { buildWatchFromTemplate, listWatchTemplates } from "../lib/templates.js";
 import { canonicalizeWatchUrl } from "../lib/url-policy.js";
 import { toWatchView, type ToolContext } from "./shared.js";
+import { createToolRuntimeServices } from "./runtime-services.js";
 
 export function registerWatchTemplateTools(api: OpenClawPluginApi, ctx: ToolContext): void {
-  const { storePath, withStore } = ctx;
+  const runtime = createToolRuntimeServices(api, ctx);
 
   api.registerTool(
     {
@@ -81,17 +81,13 @@ export function registerWatchTemplateTools(api: OpenClawPluginApi, ctx: ToolCont
           });
         }
 
-        let watch = null;
-        await withStore(async (store) => {
-          watch = addWatch(store, watchInput);
-          await saveStore(storePath, store);
-        });
+        const watch = await runtime.services.watch.add(watchInput, cfg);
 
         return jsonResult({
           ok: true,
           dryRun: false,
           template,
-          watch: toWatchView(watch!),
+          watch: toWatchView(watch),
         });
       },
     },

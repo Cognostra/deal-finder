@@ -2,10 +2,10 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "../config.js";
-import { mergeCommittedScanResults, runScan } from "../lib/engine.js";
-import { buildSavedViewDashboard, buildViewReport } from "../lib/report.js";
-import { addSavedView, listSavedViews, loadStore, removeSavedView, saveStore, updateSavedView } from "../lib/store.js";
-import { buildScanSummary, resolveSavedViewSelection, toSavedViewSummary, toWatchView, type ToolContext } from "./shared.js";
+import { runScan } from "../lib/engine.js";
+import { saveStore } from "../lib/store.js";
+import { buildScanSummary, toWatchView, type ToolContext } from "./shared.js";
+import { createToolRuntimeServices } from "./runtime-services.js";
 
 const WATCH_SELECTOR_SCHEMA = {
   query: Type.Optional(Type.String()),
@@ -25,6 +25,7 @@ const WATCH_SELECTOR_SCHEMA = {
 
 export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext): void {
   const { storePath, withStore } = ctx;
+  const runtime = createToolRuntimeServices(api, ctx);
 
   api.registerTool(
     {
@@ -33,10 +34,9 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
       description: "List saved watch search views with selector details and current match counts.",
       parameters: Type.Object({}),
       execute: async () => {
-        const store = await loadStore(storePath);
         return jsonResult({
-          count: store.savedViews.length,
-          savedViews: listSavedViews(store).map((view) => toSavedViewSummary(store, view)),
+          count: (await runtime.repositories.savedViewRepository.list()).length,
+          savedViews: await runtime.services.savedViews.list(),
         });
       },
     },
@@ -57,8 +57,7 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
         ])),
       }),
       execute: async (_id, params) => {
-        const store = await loadStore(storePath);
-        return jsonResult(buildSavedViewDashboard(store, {
+        return jsonResult(await runtime.services.reporting.getSavedViewDashboard({
           limit: params.limit ?? 10,
           severity: params.severity ?? "medium",
         }));
@@ -88,22 +87,14 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
         }),
       }),
       execute: async (_id, params) => {
-        let saved;
-        await withStore(async (store) => {
-          if (store.savedViews.some((view) => view.name.toLowerCase() === params.name.trim().toLowerCase())) {
-            throw new Error(`deal-hunter: a saved view named "${params.name}" already exists`);
-          }
-          saved = addSavedView(store, {
-            name: params.name,
-            description: params.description,
-            selector: params.selector,
-          });
-          await saveStore(storePath, store);
+        const saved = await runtime.services.savedViews.create({
+          name: params.name,
+          description: params.description,
+          selector: params.selector,
         });
-        const store = await loadStore(storePath);
         return jsonResult({
           ok: true,
-          savedView: toSavedViewSummary(store, saved!),
+          savedView: saved,
         });
       },
     },
@@ -119,10 +110,9 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
         savedViewId: Type.String(),
       }),
       execute: async (_id, params) => {
-        const store = await loadStore(storePath);
-        const selection = resolveSavedViewSelection(store, params.savedViewId);
+        const selection = await runtime.services.savedViews.run(params.savedViewId);
         return jsonResult({
-          savedView: selection.summary,
+          savedView: selection.savedView,
           watches: selection.watches.map(toWatchView),
         });
       },
@@ -152,30 +142,14 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
         })),
       }),
       execute: async (_id, params) => {
-        let updated;
-        await withStore(async (store) => {
-          if (
-            params.name &&
-            store.savedViews.some(
-              (view) => view.id !== params.savedViewId && view.name.toLowerCase() === params.name.trim().toLowerCase(),
-            )
-          ) {
-            throw new Error(`deal-hunter: a saved view named "${params.name}" already exists`);
-          }
-          updated = updateSavedView(store, params.savedViewId, {
-            name: params.name,
-            description: params.description,
-            selector: params.selector,
-          });
-          if (!updated) {
-            throw new Error(`deal-hunter: unknown saved view "${params.savedViewId}"`);
-          }
-          await saveStore(storePath, store);
+        const updated = await runtime.services.savedViews.update(params.savedViewId, {
+          name: params.name,
+          description: params.description,
+          selector: params.selector,
         });
-        const store = await loadStore(storePath);
         return jsonResult({
           ok: true,
-          savedView: toSavedViewSummary(store, updated!),
+          savedView: updated,
         });
       },
     },
@@ -191,14 +165,7 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
         savedViewId: Type.String(),
       }),
       execute: async (_id, params) => {
-        let removed = false;
-        await withStore(async (store) => {
-          removed = removeSavedView(store, params.savedViewId);
-          if (!removed) {
-            throw new Error(`deal-hunter: unknown saved view "${params.savedViewId}"`);
-          }
-          await saveStore(storePath, store);
-        });
+        const removed = await runtime.services.savedViews.remove(params.savedViewId);
         return jsonResult({ ok: true, removed });
       },
     },
@@ -217,8 +184,8 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
       execute: async (_id, params, signal) => {
         const cfg = resolveDealConfig(api);
         const commit = params.commit !== false;
-        const scanSnapshot = await withStore(async (store) => structuredClone(store));
-        const selection = resolveSavedViewSelection(scanSnapshot, params.savedViewId);
+        const selection = await runtime.repositories.savedViewRepository.resolveSelection(params.savedViewId);
+        const scanSnapshot = structuredClone(selection.store);
         const eligibleWatchIds = selection.watches.filter((watch) => watch.enabled).map((watch) => watch.id);
 
         let results = [] as Awaited<ReturnType<typeof runScan>>;
@@ -237,7 +204,7 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
         let commitSummary = null;
         if (commit && results.length > 0) {
           commitSummary = await withStore(async (store) => {
-            const summary = mergeCommittedScanResults(store, results, cfg);
+            const summary = runtime.services.scanCommit.merge(store, results, cfg);
             await saveStore(storePath, store);
             return summary;
           });
@@ -245,7 +212,11 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
 
         const { summary, rankedAlerts, reviewWarnings } = buildScanSummary(results);
         return jsonResult({
-          savedView: selection.summary,
+          savedView: {
+            ...selection.savedView,
+            matchCount: selection.watches.length,
+            previewWatchIds: selection.watchIds.slice(0, 20),
+          },
           matchedCount: selection.watches.length,
           enabledMatchedCount: eligibleWatchIds.length,
           disabledMatchedCount: selection.watches.length - eligibleWatchIds.length,
@@ -278,17 +249,11 @@ export function registerSavedViewTools(api: OpenClawPluginApi, ctx: ToolContext)
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
       }),
       execute: async (_id, params) => {
-        const store = await loadStore(storePath);
-        const selection = resolveSavedViewSelection(store, params.savedViewId);
-        const scoped = buildViewReport(store, selection.watches, {
-          limit: params.limit ?? 10,
+        return jsonResult(await runtime.services.reporting.getViewReport({
+          savedViewId: params.savedViewId,
+          limit: params.limit,
           severity: params.severity ?? "low",
-          metric: params.metric ?? "vs_peak",
-        });
-        return jsonResult({
-          savedView: selection.summary,
-          ...scoped,
-        });
+        }));
       },
     },
     { optional: false },

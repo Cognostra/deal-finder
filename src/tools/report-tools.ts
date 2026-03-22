@@ -3,26 +3,16 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
 import { resolveDealConfig } from "../config.js";
 import {
-  buildDigestSummary,
-  buildDoctorSummary,
-  buildHealthSummary,
-  buildHostReportSummary,
   buildQuickstartGuide,
   buildSampleSetup,
-  buildStoreReport,
-  buildTaxonomySummary,
-  buildWorkflowActionQueue,
-  buildWorkflowBestOpportunities,
-  buildWorkflowCleanup,
-  buildWorkflowPortfolio,
-  buildWorkflowTriage,
 } from "../lib/report.js";
-import { loadStore } from "../lib/store.js";
-import { buildScopedStore, resolveSavedViewSelection, toWatchView, type ToolContext } from "./shared.js";
+import { toWatchView, type ToolContext } from "./shared.js";
 import { registerReportInsightTools } from "./report-insight-tools.js";
+import { createToolRuntimeServices } from "./runtime-services.js";
 
 export function registerReportTools(api: OpenClawPluginApi, ctx: ToolContext): void {
-  const { storePath, withStore } = ctx;
+  const { storePath } = ctx;
+  const runtime = createToolRuntimeServices(api, ctx);
 
   api.registerTool(
     {
@@ -124,8 +114,8 @@ export function registerReportTools(api: OpenClawPluginApi, ctx: ToolContext): v
   api.registerTool({ name: "deal_quickstart", label: "Deal Hunter", description: "Show a first-run checklist, recommended prompts, and privacy/safety reminders for new users.", parameters: Type.Object({}), execute: async () => jsonResult(buildQuickstartGuide()) }, { optional: false });
 
   api.registerTool({ name: "deal_report", label: "Deal Hunter", description: "Summarize the current watchlist, snapshots, and signal-heavy watches.", parameters: Type.Object({}), execute: async () => {
-    const store = await loadStore(storePath);
-    const report = buildStoreReport(store);
+    const store = await runtime.repositories.watchRepository.loadStore();
+    const report = await runtime.services.reporting.getStoreReport();
     return jsonResult({ ...report, watches: store.watches.map(toWatchView) });
   } }, { optional: false });
 
@@ -134,10 +124,11 @@ export function registerReportTools(api: OpenClawPluginApi, ctx: ToolContext): v
     severity: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildDigestSummary(scopedStore, { limit: params.limit ?? 5, severity: params.severity ?? "medium", scopeLabel: selection?.summary?.name ?? "watchlist" }) });
+    return jsonResult(await runtime.services.reporting.getDigest({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+      severity: params.severity ?? "medium",
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_workflow_action_queue", label: "Deal Hunter", description: "Build a prioritized next-actions queue from current opportunities, alerts, cleanup issues, discovery targets, and review candidates.", parameters: Type.Object({
@@ -145,40 +136,41 @@ export function registerReportTools(api: OpenClawPluginApi, ctx: ToolContext): v
     severity: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildWorkflowActionQueue(scopedStore, { limit: params.limit ?? 10, severity: params.severity ?? "medium", scopeLabel: selection?.summary?.name ?? "watchlist" }) });
+    return jsonResult(await runtime.services.reporting.getWorkflowActionQueue({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+      severity: params.severity ?? "medium",
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_watch_taxonomy", label: "Deal Hunter", description: "Summarize how the watchlist is organized across groups and tags, and suggest reusable saved views.", parameters: Type.Object({
     savedViewId: Type.Optional(Type.String()),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildTaxonomySummary(scopedStore, params.limit ?? 10) });
+    return jsonResult(await runtime.services.reporting.getTaxonomy({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_host_report", label: "Deal Hunter", description: "Summarize watches by retailer host, including signals, alert density, and recommended cadence.", parameters: Type.Object({
     savedViewId: Type.Optional(Type.String()),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildHostReportSummary(scopedStore, params.limit ?? 10) });
+    return jsonResult(await runtime.services.reporting.getHostReport({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_workflow_portfolio", label: "Deal Hunter", description: "Produce a portfolio-style dashboard for the whole watchlist or a saved view.", parameters: Type.Object({
     savedViewId: Type.Optional(Type.String()),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildWorkflowPortfolio(scopedStore, params.limit ?? 10) });
+    return jsonResult(await runtime.services.reporting.getWorkflowPortfolio({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_workflow_triage", label: "Deal Hunter", description: "Answer what changed, what matters, what looks noisy, and what should be reviewed first.", parameters: Type.Object({
@@ -186,42 +178,41 @@ export function registerReportTools(api: OpenClawPluginApi, ctx: ToolContext): v
     severity: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildWorkflowTriage(scopedStore, params.limit ?? 5, params.severity ?? "medium") });
+    return jsonResult(await runtime.services.reporting.getWorkflowTriage({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+      severity: params.severity ?? "medium",
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_workflow_cleanup", label: "Deal Hunter", description: "Surface duplicate, stale, weak-extraction, and noisy watches that are good cleanup candidates.", parameters: Type.Object({
     savedViewId: Type.Optional(Type.String()),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildWorkflowCleanup(scopedStore, params.limit ?? 10) });
+    return jsonResult(await runtime.services.reporting.getWorkflowCleanup({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_workflow_best_opportunities", label: "Deal Hunter", description: "Rank the strongest likely-real deals, suspicious glitches, and best same-product internal spreads.", parameters: Type.Object({
     savedViewId: Type.Optional(Type.String()),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
   }), execute: async (_id, params) => {
-    const store = await loadStore(storePath);
-    const selection = params.savedViewId ? resolveSavedViewSelection(store, params.savedViewId) : null;
-    const scopedStore = selection ? buildScopedStore(store, selection.watches) : store;
-    return jsonResult({ savedView: selection?.summary, ...buildWorkflowBestOpportunities(scopedStore, Math.min(params.limit ?? 5, 20)) });
+    return jsonResult(await runtime.services.reporting.getWorkflowBestOpportunities({
+      savedViewId: params.savedViewId,
+      limit: params.limit,
+    }));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_health", label: "Deal Hunter", description: "Show configuration, storage, safety posture, and operational recommendations.", parameters: Type.Object({}), execute: async () => {
     const cfg = resolveDealConfig(api);
-    const store = await loadStore(storePath);
-    return jsonResult(buildHealthSummary(store, cfg, storePath));
+    return jsonResult(await runtime.services.reporting.getHealth(cfg, storePath));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_doctor", label: "Deal Hunter", description: "Run a lightweight configuration and watchlist sanity check.", parameters: Type.Object({}), execute: async () => {
     const cfg = resolveDealConfig(api);
-    const store = await loadStore(storePath);
-    return jsonResult(buildDoctorSummary(store, cfg, storePath));
+    return jsonResult(await runtime.services.reporting.getDoctor(cfg, storePath));
   } }, { optional: false });
 
   api.registerTool({ name: "deal_sample_setup", label: "Deal Hunter", description: "Show example install, config, allowlist, prompts, and cron setup for Deal Hunter.", parameters: Type.Object({}), execute: async () => jsonResult(buildSampleSetup()) }, { optional: false });
