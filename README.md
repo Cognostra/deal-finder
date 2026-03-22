@@ -2,6 +2,18 @@
 
 OpenClaw plugin: watch product URLs, scan with **conditional GET** (`ETag` / `Last-Modified`), **streaming byte caps**, shared **undici** connection pooling, and TypeScript heuristic deal signals.
 
+Current public release: `1.0.0`
+
+Primary install path:
+
+```bash
+openclaw plugins install openclaw-deal-hunter
+```
+
+Source repo:
+
+`https://github.com/Cognostra/deal-finder`
+
 The extraction stack is layered:
 
 - retailer-aware extractors for common HTML patterns
@@ -18,21 +30,11 @@ The extraction stack is layered:
 
 Requires **Node >= 20** and OpenClaw Gateway with plugin loading enabled.
 
-Source repo:
-
-`https://github.com/Cognostra/deal-finder`
-
 Important install note:
 
 - For native OpenClaw plugins, the supported public install path is an npm package spec such as `openclaw plugins install <npm-spec>`.
 - The OpenClaw CLI does **not** accept a GitHub repo URL as a native plugin install spec.
 - GitHub should be treated as the source/support repo; npm is the easy end-user install path.
-
-Primary install path:
-
-```bash
-openclaw plugins install openclaw-deal-hunter
-```
 
 Local source install for development:
 
@@ -517,7 +519,7 @@ Notes:
 
 ## Publishing and listing
 
-For a community-listed OpenClaw plugin, the expected public shape is:
+`openclaw-deal-hunter@1.0.0` is published on npm. For a community-listed OpenClaw plugin, the expected public shape is:
 
 - npm-published package
 - public GitHub repository
@@ -525,6 +527,12 @@ For a community-listed OpenClaw plugin, the expected public shape is:
 - issue tracker
 
 That means this repo should be the public source of truth, but end-user installs should point at the npm package, not the GitHub URL.
+
+Release status:
+
+- current published package: `openclaw-deal-hunter@1.0.0`
+- public install command: `openclaw plugins install openclaw-deal-hunter`
+- source/support repo: `https://github.com/Cognostra/deal-finder`
 
 ## Local OpenClaw test harness
 
@@ -595,6 +603,12 @@ npm run test:diagnose
 That command prints the active `node` resolution and then runs Vitest with the `hanging-process` reporter under a real-Node-first `PATH`. This matters on systems where `node` is aliased or symlinked to Bun.
 
 `npm run release:verify` builds a real tarball, installs it into a fresh temporary OpenClaw state using the local `openclaw/` source checkout, and lists plugins to confirm the package installs cleanly as an archive.
+
+For a real public sanity check after publishing, you can also verify the registry version directly:
+
+```bash
+npm view openclaw-deal-hunter version
+```
 
 `npm run audit:prod` checks the published runtime dependency tree only. `npm run audit:full` includes dev dependencies as well, which is useful for tracking issues inherited from the local OpenClaw test harness and other development-only tooling.
 
