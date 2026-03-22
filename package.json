@@ -24,6 +24,7 @@
     "pack:check": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm pack --dry-run",
     "publish:dry-run": "env NPM_CONFIG_CACHE=/tmp/openclaw-deal-hunter-npm-cache npm publish --dry-run",
     "release:verify": "./scripts/verify-pack-install.sh",
+    "standalone:start": "node dist/standalone/cli.js",
     "test": "env PATH=\"/usr/bin:/bin:$PATH\" ./node_modules/.bin/vitest run --configLoader runner",
     "test:diagnose": "./scripts/test-diagnose.sh",
     "prepack": "npm run build",
@@ -48,6 +49,7 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.48",
+    "fastify": "^5.8.2",
     "undici": "^7.24.5"
   },
   "devDependencies": {

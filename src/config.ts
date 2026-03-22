@@ -47,13 +47,16 @@ export type ResolvedDealConfig = Required<
     };
   };
 
-export function resolveDealConfig(api: OpenClawPluginApi): ResolvedDealConfig {
-  const raw = (api.pluginConfig ?? {}) as DealHunterPluginConfig;
-  const baseDir = api.resolvePath("~/.openclaw/deal-hunter");
-  const defaultStore = join(baseDir, "store.json");
-
+export function resolveDealConfigFromInput(
+  raw: DealHunterPluginConfig,
+  args: {
+    defaultBaseDir: string;
+    resolvePath: (input: string) => string;
+  },
+): ResolvedDealConfig {
+  const defaultStore = join(args.defaultBaseDir, "store.json");
   return {
-    storePath: raw.storePath ? api.resolvePath(raw.storePath) : defaultStore,
+    storePath: raw.storePath ? args.resolvePath(raw.storePath) : defaultStore,
     maxConcurrent: raw.maxConcurrent ?? 8,
     maxBytesPerResponse: raw.maxBytesPerResponse ?? 1_048_576,
     defaultMaxRpsPerHost: raw.defaultMaxRpsPerHost ?? 1,
@@ -85,4 +88,13 @@ export function resolveDealConfig(api: OpenClawPluginApi): ResolvedDealConfig {
       timeoutMs: raw.discovery?.timeoutMs ?? 25_000,
     },
   };
+}
+
+export function resolveDealConfig(api: OpenClawPluginApi): ResolvedDealConfig {
+  const raw = (api.pluginConfig ?? {}) as DealHunterPluginConfig;
+  const baseDir = api.resolvePath("~/.openclaw/deal-hunter");
+  return resolveDealConfigFromInput(raw, {
+    defaultBaseDir: baseDir,
+    resolvePath: (input) => api.resolvePath(input),
+  });
 }

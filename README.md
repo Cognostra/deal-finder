@@ -10,6 +10,13 @@ Primary install path:
 openclaw plugins install openclaw-deal-hunter
 ```
 
+Standalone localhost mode is also available in `1.0.0+`:
+
+```bash
+npm run build
+npm run standalone:start -- --host 127.0.0.1 --port 3210
+```
+
 Source repo:
 
 `https://github.com/Cognostra/deal-finder`
@@ -70,6 +77,58 @@ Update or remove:
 ```bash
 openclaw plugins install openclaw-deal-hunter@latest
 openclaw plugins remove openclaw-deal-hunter
+```
+
+## Standalone Localhost API
+
+The project can also run as a single-user localhost server without OpenClaw.
+
+Default posture:
+
+- binds to `127.0.0.1`
+- no auth required on loopback
+- keeps the same bounded fetch, discovery, and review policies as the plugin runtime
+
+If you bind outside localhost, you must provide an auth token:
+
+```bash
+npm run build
+npm run standalone:start -- --host 0.0.0.0 --port 3210 --auth-token your-token
+```
+
+Environment variables are also supported:
+
+```bash
+DEAL_HUNTER_HOST=127.0.0.1 \
+DEAL_HUNTER_PORT=3210 \
+DEAL_HUNTER_STORE_PATH=/path/to/store.json \
+npm run standalone:start
+```
+
+Available Phase 3 endpoint families:
+
+- `/health/live`
+- `/health/ready`
+- `/api/v1/system/*`
+- `/api/v1/watches/*`
+- `/api/v1/views/*`
+- `/api/v1/scans/*`
+- `/api/v1/discovery/*`
+- `/api/v1/reviews/*`
+- `/api/v1/reports/*`
+
+Example smoke checks:
+
+```bash
+curl http://127.0.0.1:3210/health/live
+curl http://127.0.0.1:3210/health/ready
+curl http://127.0.0.1:3210/api/v1/system/policy
+```
+
+With token auth enabled:
+
+```bash
+curl -H 'Authorization: Bearer your-token' http://127.0.0.1:3210/api/v1/system/policy
 ```
 
 Allow-list tools for your agent (names must be explicitly allowed when using plugin-only tool policy):
@@ -589,6 +648,7 @@ OPENCLAW_TEST_STATE_DIR="$HOME/.openclaw" ./scripts/openclaw-test-cli.sh ...
 ```bash
 npm run build
 npm test
+npm run standalone:start -- --host 127.0.0.1 --port 3210
 npm run audit:prod
 npm run audit:full
 npm run release:verify
