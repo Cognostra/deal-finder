@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedDealConfig } from "../config.js";
+import { writeFile } from "node:fs/promises";
 import { addSavedView, addWatch, loadStore, saveStore, type ImportedWatchInput } from "../lib/store.js";
+import { createJsonStoreMaintenancePort } from "./json-maintenance.js";
 import type { ScanResultItem, StoreFile, Watch } from "../types.js";
 import { createJsonSavedViewRepository, createJsonWatchRepository } from "./json-repositories.js";
 import { createDiscoveryService } from "./services/discovery-service.js";
@@ -100,6 +102,49 @@ describe("json repositories", () => {
     ];
     expect((await runtime.watchRepository.importWatches(watches, "append")).added).toBe(2);
     expect((await runtime.watchRepository.exportWatches({})).count).toBe(2);
+  });
+
+  it("inspects JSON stores and reports recoverable entry-level corruption", async () => {
+    const runtime = await makeRuntime();
+    await writeFile(
+      runtime.storePath,
+      JSON.stringify({
+        version: 2,
+        watches: [
+          {
+            id: "watch-1",
+            url: "https://shop.test/a",
+            enabled: true,
+            createdAt: "2026-03-20T00:00:00.000Z",
+          },
+          {
+            id: "watch-2",
+            label: "Broken",
+          },
+        ],
+        savedViews: [
+          {
+            id: "view-1",
+            name: "All",
+            createdAt: "2026-03-20T00:00:00.000Z",
+            selector: { query: "gpu", limit: 10 },
+          },
+          {
+            id: "",
+            name: "Broken",
+            createdAt: "2026-03-20T00:00:00.000Z",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const inspection = await createJsonStoreMaintenancePort({ storePath: runtime.storePath }).inspect();
+    expect(inspection.recovered).toBe(true);
+    expect(inspection.store.watches).toHaveLength(1);
+    expect(inspection.store.savedViews).toHaveLength(1);
+    expect(inspection.warnings.join("\n")).toMatch(/Dropped watch/);
+    expect(inspection.warnings.join("\n")).toMatch(/Dropped saved view/);
   });
 });
 

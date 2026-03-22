@@ -146,6 +146,8 @@ export type WatchHistoryEntry = {
   changeType?: ScanChangeType;
   alertSeverity?: AlertSeverity;
   alerts?: string[];
+  fetchSource?: FetchSource;
+  responseTruncated?: boolean;
   summaryLine?: string;
 };
 

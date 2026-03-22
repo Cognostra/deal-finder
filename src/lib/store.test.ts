@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { addSavedView, addWatch, appendWatchHistory, applyWatchSnapshotPatch, bulkUpdateWatches, importWatches, listSavedViews, loadStore, parseImportedWatchPayload, removeSavedView, removeWatch, saveStore, setWatchEnabled, updateSavedView, updateWatch } from "./store.js";
+import { inspectParsedStoreData, inspectStore } from "./store-maintenance.js";
 
 let tempDirs: string[] = [];
 
@@ -64,6 +65,94 @@ describe("store", () => {
     const path = await makeTempStorePath();
     await writeFile(path, "{not valid json", "utf8");
     await expect(loadStore(path)).rejects.toThrow();
+  });
+
+  it("recovers valid entries from partially malformed version 2 stores", async () => {
+    const path = await makeTempStorePath();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 2,
+        watches: [
+          {
+            id: "watch-1",
+            url: "https://shop.test/item",
+            enabled: true,
+            createdAt: "2026-03-20T00:00:00.000Z",
+            lastSnapshot: {
+              title: "Widget",
+              fetchedAt: "2026-03-20T00:00:00.000Z",
+            },
+          },
+          {
+            id: "watch-2",
+            enabled: true,
+            createdAt: "2026-03-20T00:00:00.000Z",
+          },
+        ],
+        savedViews: [
+          {
+            id: "view-1",
+            name: "Widgets",
+            createdAt: "2026-03-20T00:00:00.000Z",
+            selector: { query: "widget", limit: 5 },
+          },
+          {
+            id: "view-2",
+            name: "",
+            createdAt: "2026-03-20T00:00:00.000Z",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    await expect(loadStore(path)).resolves.toEqual({
+      version: 2,
+      watches: [
+        {
+          id: "watch-1",
+          url: "https://shop.test/item",
+          enabled: true,
+          createdAt: "2026-03-20T00:00:00.000Z",
+          lastSnapshot: {
+            title: "Widget",
+            fetchedAt: "2026-03-20T00:00:00.000Z",
+          },
+        },
+      ],
+      savedViews: [
+        {
+          id: "view-1",
+          name: "Widgets",
+          createdAt: "2026-03-20T00:00:00.000Z",
+          selector: { query: "widget", limit: 5 },
+        },
+      ],
+    });
+  });
+
+  it("reports migration and recovery details through store inspection", async () => {
+    const inspection = inspectParsedStoreData({
+      version: 1,
+      watches: [
+        {
+          id: "watch-1",
+          url: "https://shop.test/item",
+          enabled: true,
+          createdAt: "2026-03-20T00:00:00.000Z",
+        },
+        {
+          id: "watch-2",
+          label: "broken",
+        },
+      ],
+    });
+
+    expect(inspection.migratedFromVersion).toBe(1);
+    expect(inspection.recovered).toBe(true);
+    expect(inspection.store.watches).toHaveLength(1);
+    expect(inspection.warnings.join("\n")).toMatch(/Dropped watch/);
   });
 
   it("does not leave temp files behind after save", async () => {

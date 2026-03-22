@@ -336,6 +336,8 @@ function expectOptionalHistory(value: unknown): WatchHistoryEntry[] | undefined 
       changeType: expectOptionalString(obj.changeType, `history[${index}].changeType`) as WatchHistoryEntry["changeType"],
       alertSeverity: expectOptionalString(obj.alertSeverity, `history[${index}].alertSeverity`) as WatchHistoryEntry["alertSeverity"],
       alerts: expectOptionalStringArray(obj.alerts, `history[${index}].alerts`),
+      fetchSource: expectOptionalString(obj.fetchSource, `history[${index}].fetchSource`) as WatchHistoryEntry["fetchSource"],
+      responseTruncated: expectOptionalBoolean(obj.responseTruncated, `history[${index}].responseTruncated`),
       summaryLine: expectOptionalString(obj.summaryLine, `history[${index}].summaryLine`),
     };
   });

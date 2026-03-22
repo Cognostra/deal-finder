@@ -14,6 +14,7 @@ import type {
   WatchSelector,
 } from "../types.js";
 import { cloneWatchSnapshot } from "./store-import.js";
+import { inspectStore } from "./store-maintenance.js";
 export { importWatches, parseImportedWatchPayload } from "./store-import.js";
 export type { ImportedWatchInput, ImportMode } from "./store-import.js";
 
@@ -28,10 +29,6 @@ function normalizeTags(tags: string[] | undefined): string[] | undefined {
 function normalizeGroup(group: string | undefined): string | undefined {
   const normalized = group?.trim();
   return normalized ? normalized : undefined;
-}
-
-function emptyStore(): StoreFile {
-  return { version: 2, watches: [], savedViews: [] };
 }
 
 function normalizeSelector(selector: WatchSelector | undefined): WatchSelector {
@@ -75,35 +72,7 @@ function materializeSavedView(input: {
 }
 
 export async function loadStore(path: string): Promise<StoreFile> {
-  try {
-    const raw = await readFile(path, "utf8");
-    const data = JSON.parse(raw) as { version?: number; watches?: unknown; savedViews?: unknown };
-    if (!data || !Array.isArray(data.watches)) {
-      return emptyStore();
-    }
-    if (data.version === 1) {
-      return {
-        version: 2,
-        watches: data.watches as Watch[],
-        savedViews: [],
-      };
-    }
-    if (data.version !== 2) {
-      return emptyStore();
-    }
-    return {
-      version: 2,
-      watches: data.watches as Watch[],
-      savedViews: Array.isArray(data.savedViews) ? (data.savedViews as SavedWatchView[]).map((view) => ({
-        ...view,
-        selector: normalizeSelector(view.selector),
-      })) : [],
-    };
-  } catch (e: unknown) {
-    const err = e as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") return emptyStore();
-    throw e;
-  }
+  return (await inspectStore(path)).store;
 }
 
 export async function saveStore(path: string, data: StoreFile): Promise<void> {
@@ -215,6 +184,8 @@ function toHistoryEntry(result: ScanResultItem): WatchHistoryEntry | undefined {
     changeType: result.changeType,
     alertSeverity: result.alertSeverity,
     alerts: result.alerts.slice(0, 10),
+    fetchSource: result.fetchSource,
+    responseTruncated: result.responseTruncated,
     summaryLine: result.summaryLine,
   };
 }
